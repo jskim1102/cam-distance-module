@@ -1,0 +1,550 @@
+/* 평범한 데모 베이스라인 — 디자인토큰/CSS 변수 없음, 라이트 단일 팔레트.
+   phase4 dev 가 테이블/폼/모달/그리드에 쓸 베이스 클래스만 제공. */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto,
+    "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #1f2937;
+  background: #f9fafb;
+}
+
+/* 레이아웃 */
+.app {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 24px 16px;
+}
+
+h1 {
+  margin: 0 0 4px;
+  font-size: 22px;
+}
+
+.subtitle {
+  margin: 0;
+  color: #6b7280;
+}
+
+/* 테이블 — 목록/CRUD */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+}
+
+th,
+td {
+  padding: 8px 12px;
+  border: 1px solid #e5e7eb;
+  text-align: left;
+}
+
+th {
+  background: #f3f4f6;
+  font-weight: 600;
+}
+
+tbody tr:nth-child(even) {
+  background: #f9fafb;
+}
+
+/* 버튼 */
+button {
+  font: inherit;
+  padding: 6px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  background: #fff;
+  color: #1f2937;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  background: #f3f4f6;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+button.primary {
+  border-color: #2563eb;
+  background: #2563eb;
+  color: #fff;
+}
+
+button.primary:hover:not(:disabled) {
+  background: #1d4ed8;
+}
+
+button.danger {
+  border-color: #dc2626;
+  color: #dc2626;
+}
+
+button.danger:hover:not(:disabled) {
+  background: #fef2f2;
+}
+
+/* 폼 */
+label {
+  display: block;
+  margin-bottom: 4px;
+  font-weight: 500;
+}
+
+input,
+select {
+  font: inherit;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+}
+
+.field {
+  margin-bottom: 12px;
+}
+
+/* 모달 — 등록 폼 */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.modal {
+  width: 100%;
+  max-width: 420px;
+  padding: 20px;
+  border-radius: 6px;
+  background: #fff;
+  /* 큰 측정 모달(16:9 영상 무대)이 뷰포트보다 길어지면 스크롤 — 내용이 맞으면 시각 변화 없음. */
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.modal h2 {
+  margin: 0 0 16px;
+  font-size: 18px;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+/* NxN 그리드 플레이어 — columns 는 inline style 로 주입 */
+.grid {
+  display: grid;
+  gap: 8px;
+}
+
+.grid-cell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  background: #e5e7eb; /* 회색 placeholder — phase4 에서 JPEG 플레이어로 교체 시 #000 */
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+}
+
+/* 거리측정 토글 — 셀 우상단. calibration 없으면 disabled(회색). ON 시 focus 확대 모달. */
+.grid-measure-toggle {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 2;
+  padding: 3px 8px;
+  font-size: 11px;
+  border-radius: 4px;
+  border: 1px solid #2563eb;
+  background: rgba(37, 99, 235, 0.9);
+  color: #fff;
+  cursor: pointer;
+}
+
+.grid-measure-toggle:hover:not(:disabled) {
+  background: #1d4ed8;
+}
+
+.grid-measure-toggle:disabled {
+  border-color: #9ca3af;
+  background: rgba(107, 114, 128, 0.7);
+  color: #e5e7eb;
+  cursor: not-allowed;
+}
+
+/* WHEP placeholder — phase4 WhepPlayer 가 video.srcObject 주입.
+   실 스트림 들어오면 회색 → 검정, 라벨은 위에 떠있음. */
+.grid-cell-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #e5e7eb;
+}
+
+.grid-cell-nosignal {
+  position: relative;
+  font-size: 12px;
+  color: #9ca3af;
+}
+
+/* 페이지 헤더 — 제목 + 등록 버튼 */
+.page-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+/* 요약 스트립 — 전체/온라인 (phase4 stats polling 이 채움) */
+.summary {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  margin-bottom: 20px;
+}
+
+.summary-cell {
+  padding: 12px 16px;
+  border-right: 1px solid #e5e7eb;
+}
+
+.summary-cell:last-child {
+  border-right: none;
+}
+
+.summary-label {
+  font-size: 11px;
+  color: #6b7280;
+  margin-bottom: 4px;
+}
+
+.summary-value {
+  font-size: 28px;
+  font-weight: 300;
+  line-height: 1;
+}
+
+.summary-sub {
+  font-size: 13px;
+  color: #9ca3af;
+}
+
+/* 테이블 셀 */
+.cam-id {
+  font-size: 11px;
+  color: #9ca3af;
+  letter-spacing: 0.05em;
+}
+
+.cam-name {
+  font-weight: 500;
+}
+
+.url-cell {
+  font-size: 12px;
+  color: #6b7280;
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 상태 표시 — phase4 stats.active 가 토글 */
+.status {
+  font-size: 12px;
+}
+
+.status-on {
+  color: #16a34a;
+}
+
+.status-off {
+  color: #9ca3af;
+}
+
+/* 폼 힌트 / 에러 */
+.hint {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: #9ca3af;
+}
+
+.form-error {
+  margin: 0;
+  font-size: 12px;
+  color: #dc2626;
+}
+
+/* 그리드 섹션 */
+.grid-heading {
+  margin: 28px 0 12px;
+  font-size: 16px;
+}
+
+.grid-empty {
+  color: #9ca3af;
+}
+
+/* 측정 모달 — calibration | 측정 탭 바(B1). */
+.tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid #e5e7eb;
+  margin-bottom: 12px;
+}
+
+.tab {
+  padding: 8px 16px;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 4px 4px 0 0;
+  background: transparent;
+  color: #6b7280;
+  margin-bottom: -1px;
+}
+
+.tab.active {
+  border-color: #e5e7eb;
+  border-bottom-color: #fff;
+  background: #fff;
+  color: #1f2937;
+  font-weight: 600;
+}
+
+/* 측정 모달 — 보조 액션 행(스냅샷 갱신 등). */
+.measure-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
+
+/* 측정 뷰 — <video> + MeasureOverlay 무대. natural 종횡비, contain.
+   측정 모달(maxWidth 980) 안에 들어가므로 width:100% 로 모달 폭에 맞춘다. */
+.measure-stage {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: #000;
+  overflow: hidden;
+}
+
+/* calibration 탭일 때 video 무대 숨김 — 단 display:none 금지(디코딩 throttle→검은 grab).
+   화면 밖으로 보내되 렌더 트리에 남겨 디코딩 유지 → 실 프레임 grab 보장. */
+.measure-stage-offscreen {
+  position: absolute;
+  left: -99999px;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  aspect-ratio: auto;
+  pointer-events: none;
+}
+
+/* 풀페이지 calibration — 큰 picking 영역 위해 페이지 폭 확장. */
+.calib-page {
+  max-width: 1320px;
+}
+
+/* 라이브 프리뷰 — WHEP <video> 를 항상 렌더(디코딩 유지 → 실 프레임 grab). 작게 보여
+   "지금 잡히는 화면" 확인용. 큰 picking 은 아래 스냅샷(CalibrationModal). */
+.calib-live-preview {
+  position: relative;
+  width: 320px;
+  aspect-ratio: 16 / 9;
+  background: #000;
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+
+.calib-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+/* 풀페이지에선 스냅샷 picking 영역을 크게 — 모달(820)보다 넓게. */
+.calib-page .calib-snapshot {
+  flex: 0 0 62%;
+}
+
+/* 측정 뷰 안의 WHEP <video> 는 무대 전체를 채우되 letterbox(contain) 유지 —
+   클릭 좌표 매핑(videoCoords)이 letterbox 를 보정하므로 그리드와 동일 규칙. */
+.measure-stage .grid-cell-video {
+  background: #000;
+}
+
+/* canvas-over-video 측정 오버레이 — video 와 동일하게 무대를 채워 스케일.
+   BboxOverlay 와 달리 클릭을 받아야 하므로 pointer-events 유지(기본값). */
+.measure-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* calibration 모달 — prime 다크 인라인스타일을 substrate 라이트 톤으로 재스킨.
+   삼각측량/picking 로직은 verbatim, 시각만 라이트 단일 팔레트. */
+.calib-steps {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: #9ca3af;
+}
+
+.calib-step.done {
+  color: #2563eb;
+}
+
+/* 현재 단계 — done(파랑)보다 강조: 진한 파랑 + 굵게 + 밑줄.
+   RESULT 도달 시 step4 "결과"가 current 인데 이전엔 dark-gray 라 안 파래져
+   사용자가 "안 끝났다"고 오인하던 시각 버그 fix. */
+.calib-step.current {
+  color: #1d4ed8;
+  font-weight: 700;
+  text-decoration: underline;
+}
+
+.calib-main {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.calib-snapshot {
+  flex: 0 0 55%;
+}
+
+.calib-dist {
+  flex: 1;
+  min-width: 0;
+}
+
+/* measure <video> 무대와 동일하게 고정 종횡비 + contain — 그래야 클릭 매핑/마커가
+   measure 측과 비트-동일한 letterbox 보정(videoClientToNatural)을 공유한다. */
+.calib-img-wrap {
+  position: relative;
+  background: #000;
+  border-radius: 4px;
+  overflow: hidden;
+  aspect-ratio: 16 / 9;
+}
+
+.calib-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.calib-marker {
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #2563eb;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transform: translate(-50%, -50%);
+  border: 2px solid #fff;
+  pointer-events: none;
+}
+
+.calib-badge {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.calib-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.calib-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px;
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+}
+
+.calib-chip-dot {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #2563eb;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.calib-chip-err {
+  font-size: 11px;
+  color: #6b7280;
+}
+
+.calib-chip-del {
+  padding: 0 4px;
+  border: none;
+  background: transparent;
+  color: #9ca3af;
+  font-size: 11px;
+}
+
+.calib-dist-table input {
+  text-align: right;
+}
+
+.calib-result {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: #16a34a;
+}
+
+.calib-enabled {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+  font-weight: 400;
+}
