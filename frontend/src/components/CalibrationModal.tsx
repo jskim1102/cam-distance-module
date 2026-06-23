@@ -69,7 +69,7 @@ function distancesToWorldPointsBase(
 
   const d = (a: number, b: number): number => {
     const key = `${Math.min(a, b)}-${Math.max(a, b)}`;
-    return parseFloat(distances[key]);
+    return parseFloat(distances[key]) / 100; // 입력은 cm → 월드 좌표는 m 로 환산
   };
 
   const world: [number, number][] = [];
@@ -107,17 +107,17 @@ function worldPointsToDistances(wp: number[][]): Record<string, string> {
   const dist: Record<string, string> = {};
   const n = wp.length;
   if (n >= 2) {
-    dist["0-1"] = Math.sqrt(
+    dist["0-1"] = (Math.sqrt(
       (wp[1][0] - wp[0][0]) ** 2 + (wp[1][1] - wp[0][1]) ** 2,
-    ).toFixed(2);
+    ) * 100).toFixed(1); // m → cm (입력 단위)
   }
   for (let i = 2; i < n; i++) {
-    dist[`0-${i}`] = Math.sqrt(
+    dist[`0-${i}`] = (Math.sqrt(
       (wp[i][0] - wp[0][0]) ** 2 + (wp[i][1] - wp[0][1]) ** 2,
-    ).toFixed(2);
-    dist[`1-${i}`] = Math.sqrt(
+    ) * 100).toFixed(1);
+    dist[`1-${i}`] = (Math.sqrt(
       (wp[i][0] - wp[1][0]) ** 2 + (wp[i][1] - wp[1][1]) ** 2,
-    ).toFixed(2);
+    ) * 100).toFixed(1);
   }
   return dist;
 }
@@ -172,6 +172,8 @@ function CalibrationModal({ open, onClose, cameraName, snapshotUrl, initialState
   // **퍼센트 위치**(natural px ÷ naturalW × 100%) 계산 → ref 무관, 복원·fresh 둘 다 항상 표시.
   // .calib-img-wrap(16:9) + 16:9 스냅샷 → object-fit:contain letterbox 0 → 퍼센트가 정확.
   const [natSize, setNatSize] = useState<{ w: number; h: number } | null>(null);
+  // 정밀 클릭용 십자선 가이드 — 마우스 위치(%). null = 이미지 밖.
+  const [cross, setCross] = useState<{ x: number; y: number } | null>(null);
 
   // 스냅샷이 바뀌면 natSize 를 그 img 의 naturalWidth 가 준비되는 즉시 캡처한다.
   // **폴링** 방식 — onLoad/콜백ref/layoutEffect 타이밍에 의존하지 않아(복원 경로에서 그것들이
@@ -382,8 +384,26 @@ function CalibrationModal({ open, onClose, cameraName, snapshotUrl, initialState
                     points.length >= MAX_POINTS || step === "SAVING" ? "default" : "crosshair",
                 }}
                 onClick={handleImgClick}
+                onMouseMove={(e) => {
+                  if (step === "SAVING") return setCross(null);
+                  const img = imgRef.current;
+                  if (!img) return;
+                  const r = img.getBoundingClientRect();
+                  setCross({
+                    x: ((e.clientX - r.left) / r.width) * 100,
+                    y: ((e.clientY - r.top) / r.height) * 100,
+                  });
+                }}
+                onMouseLeave={() => setCross(null)}
                 draggable={false}
               />
+              {/* 정밀 클릭 십자선 가이드 — 마우스 따라 이미지 가로·세로 선(점 정확히 겨냥). */}
+              {cross && step !== "SAVING" && (
+                <>
+                  <div className="calib-cross-v" style={{ left: `${cross.x}%` }} />
+                  <div className="calib-cross-h" style={{ top: `${cross.y}%` }} />
+                </>
+              )}
               {/* 마커 = natSize(state) 기반 **퍼센트 위치** — ref/getBoundingClientRect 안 읽음.
                   wrap 이 16:9 + 스냅샷 16:9 → object-fit:contain letterbox 0 → 퍼센트가 정확.
                   복원·fresh 둘 다 natSize 만 있으면 항상 렌더(클릭 불필요). */}
@@ -437,7 +457,7 @@ function CalibrationModal({ open, onClose, cameraName, snapshotUrl, initialState
                 <thead>
                   <tr>
                     <th>구간</th>
-                    <th style={{ width: 110 }}>거리 (m)</th>
+                    <th style={{ width: 110 }}>거리 (cm)</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -451,9 +471,9 @@ function CalibrationModal({ open, onClose, cameraName, snapshotUrl, initialState
                         <td>
                           <input
                             type="number"
-                            step="0.01"
+                            step="0.1"
                             min="0"
-                            placeholder="m"
+                            placeholder="cm"
                             value={distances[key] || ""}
                             onChange={(e) => updateDistance(key, e.target.value)}
                             disabled={step === "SAVING"}

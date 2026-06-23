@@ -483,6 +483,27 @@ select {
   pointer-events: none;
 }
 
+/* 정밀 클릭 십자선 가이드 (마우스 따라 이미지 가로·세로 선) */
+.calib-cross-v,
+.calib-cross-h {
+  position: absolute;
+  background: rgba(250, 204, 21, 0.85);
+  pointer-events: none;
+  z-index: 2;
+}
+.calib-cross-v {
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  transform: translateX(-0.5px);
+}
+.calib-cross-h {
+  left: 0;
+  right: 0;
+  height: 1px;
+  transform: translateY(-0.5px);
+}
+
 .calib-badge {
   margin-top: 6px;
   font-size: 12px;
