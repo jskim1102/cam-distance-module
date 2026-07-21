@@ -589,13 +589,19 @@ def test_update_forbidden_char_400_masks_password_in_detail(client):
     assert "ba|d" not in detail and "***" in detail
 
 
-# ─── cam-distance 전용 회귀(정본 밖 tail — D4-b): fix.ckpt4 409 write-lock 해제 고정 ───
+# ─── cam-distance 전용 회귀(정본 밖 tail — D4-b): fix.ckpt4 409 후 후속 쓰기 정상 고정 ───
 def test_register_over_cap_409_releases_write_lock(client):
-    """cap 초과 409 경로가 선점한 BEGIN IMMEDIATE 쓰기 락을 rollback 으로 해제한다.
+    """cap 초과 409 이후에도 후속 쓰기(delete→create)가 정상 동작하고 cap 회계가 맞는지 고정한다.
 
-    단일스레드 TestClient 라 실제 동시경쟁은 못 내지만, 409 후에도 DB 가 write-lock 에
-    걸려있지 않고(=rollback 됨) 후속 쓰기가 정상 동작하는지 고정한다. rollback 누락 시
-    선점한 RESERVED 락이 남아 이후 delete/create 가 wedge 될 수 있다.
+    주의 — 이 테스트는 이름과 달리 `create_ipcam` 의 명시적 `db.rollback()` 을 검증하지 *못한다*.
+    fix.ckpt4 review 에서 실증: `db.rollback()` 을 제거해도 락은 ~0.000s 에 해제된다. `get_db` 의
+    `finally: db.close()` 와 커넥션 풀의 `reset_on_return='rollback'` 이 프레임워크 차원에서
+    해제를 보장하기 때문이다. 즉 이 테스트는 rollback 유무와 무관하게 통과한다 —
+    "락 해제를 검증한다"고 읽지 말 것.
+
+    실제로 고정하는 것: 409 경로가 DB 를 사용 불가 상태로 남기지 않고(단일스레드 TestClient
+    수준에서) cap 회계가 어긋나지 않는다는 행위 회귀. BEGIN IMMEDIATE 가드 자체의 실효성은
+    `test_concurrent_create_at_cap_never_exceeds_max` 가 검증한다(2스레드 실경쟁, 가드 제거 시 실패).
     """
     from app.config import MAX_IPCAMS
 
