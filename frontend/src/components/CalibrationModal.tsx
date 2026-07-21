@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import Modal from "./Modal";
-import { videoClientToNatural } from "../utils/videoCoords";
+import { videoClientToNatural, containRect } from "../utils/videoCoords";
 
 const MIN_POINTS = 4;
 const MAX_POINTS = 12;
@@ -17,6 +17,7 @@ export interface CalibrationUpdate {
   pixel_points: number[][];
   world_points: number[][];
   enabled: boolean;
+  native_size: [number, number] | null;
 }
 
 // CalibrationState(spec) — phase3 GET 응답. phase2 는 local 복원용으로만 사용.
@@ -25,6 +26,8 @@ export interface CalibrationState {
   pixel_points: number[][] | null;
   world_points: number[][] | null;
   homography: number[][] | null;
+  k1: number;
+  native_size: [number, number] | null;
   reprojection_errors: number[] | null;
   mean_reprojection_error: number | null;
   inlier_mask: number[] | null;
@@ -58,6 +61,28 @@ function getRequiredPairs(n: number): [number, number][] {
     pairs.push([1, i]);
   }
   return pairs;
+}
+
+/** 점 idx 삭제 시 거리 맵을 점 정체성 기준으로 remap. idx 초과 점 인덱스는 1 감소,
+ *  idx 를 끝점으로 갖는 거리는 폐기. anchor(0/1) 삭제로 삼각측량 basis 가 바뀌면 측정 안 한
+ *  pair 는 required 에 남지 않아 자연히 blank → 재입력 유도(save 게이트가 미완 카운트 표시).
+ *  (기존 버그: 옛 pair키로 그대로 복사 → 중간 점 삭제 시 다른 물리쌍에 옛 거리 재사용 → 잘못된 H.) */
+export function remapDistancesAfterRemoval(
+  distances: Record<string, string>,
+  idx: number,
+  newN: number,
+): Record<string, string> {
+  const required = new Set(getRequiredPairs(newN).map(([a, b]) => `${a}-${b}`));
+  const next: Record<string, string> = {};
+  for (const [key, val] of Object.entries(distances)) {
+    const [a, b] = key.split("-").map(Number);
+    if (a === idx || b === idx) continue; // 삭제 점을 끝점으로 갖는 거리 → 폐기
+    const na = a < idx ? a : a - 1;
+    const nb = b < idx ? b : b - 1;
+    const nkey = `${Math.min(na, nb)}-${Math.max(na, nb)}`;
+    if (required.has(nkey)) next[nkey] = val;
+  }
+  return next;
 }
 
 /** 거리 → 월드 좌표 변환 (삼각측량). P0=(0,0), P1=(d01,0), 이후 y는 항상 양수 (부호는 별도 탐색) */
@@ -122,19 +147,32 @@ function worldPointsToDistances(wp: number[][]): Record<string, string> {
   return dist;
 }
 
+// open 복원 시 쓸 enabled 초기값. initialState 는 fresh 카메라에서도 백엔드 default
+// calibration state 객체(homography:null, enabled:false)로 truthy 라, "data 존재"만 보고
+// enabled 를 복원하면 새 calibration 을 off 로 덮는다(fix.ckpt3 회귀). points 복원과 동일한
+// "실 calibration(homography 존재)일 때만" 가드를 써야 fresh 는 기본 on 을 유지한다.
+export function restoreEnabled(data: CalibrationState | null | undefined): boolean {
+  return data?.homography ? data.enabled : true;
+}
+
 // sign-mask 전수탐색: 2^(n-2) 조합을 onSave 로 시도해 mean_reprojection_error 최소를 채택.
 // prime L293-316 로직 유지(phase3 에서 onSave 가 실 PUT). 거리경보/inlier strip.
 // 모든 조합이 검증실패(throw)하면 마지막 사유(lastError)를 함께 반환 — 사용자에게 구체 표시용.
 // (pixel_points 검증[공선 등]은 mask 와 무관하게 동일 실패 → 첫 사유가 곧 전체 사유.)
-async function searchBestSignMask(
+export async function searchBestSignMask(
   baseWp: [number, number][],
   pixelPoints: number[][],
   enabled: boolean,
   onSave: Props["onSave"],
+  nativeSize: [number, number] | null = null,
 ): Promise<{ best: CalibrationState | null; lastError: string | null }> {
   const numCombos = 1 << (pixelPoints.length - 2);
   let best: CalibrationState | null = null;
+  let bestWp: [number, number][] | null = null; // best 후보의 world_points payload(재저장용)
   let bestError = Infinity;
+  // onSave 는 실 PUT 이라 매 후보가 DB 에 커밋된다. DB 최신 = 마지막으로 성공 저장된 후보.
+  // 그게 best 가 아니면(early break 없이 loop 종료 시) DB 는 '더 나쁜' orientation 을 갖는다.
+  let bestIsLastSaved = false;
   let lastError: string | null = null;
   for (let mask = 0; mask < numCombos; mask++) {
     const wp = applySignMask(baseWp, mask);
@@ -143,17 +181,36 @@ async function searchBestSignMask(
         pixel_points: pixelPoints,
         world_points: wp,
         enabled,
+        native_size: nativeSize,
       });
-      if (!result) continue;
+      if (!result) continue; // 검증실패 → DB 미커밋(last-saved 불변)
       const err = result.mean_reprojection_error ?? Infinity;
       if (err < bestError) {
         bestError = err;
         best = result;
+        bestWp = wp;
+        bestIsLastSaved = true;
+      } else {
+        bestIsLastSaved = false; // 더 나쁜 이 후보가 지금 DB 최신
       }
       if (err < 1) break;
     } catch (e) {
       lastError = e instanceof Error ? e.message : String(e);
       continue;
+    }
+  }
+  // DB 최신이 best 가 아니면 best 로 1회 재PUT → DB 가 최적 orientation 을 영속.
+  if (best && bestWp && !bestIsLastSaved) {
+    try {
+      const resaved = await onSave({
+        pixel_points: pixelPoints,
+        world_points: bestWp,
+        enabled,
+        native_size: nativeSize,
+      });
+      if (resaved) best = resaved;
+    } catch {
+      // 재저장 실패: loop 에서 얻은 메모리 best 반환 — UI 는 정확, DB 만 직전 상태.
     }
   }
   return { best, lastError };
@@ -167,6 +224,8 @@ function CalibrationModal({ open, onClose, cameraName, snapshotUrl, initialState
   const [saving, setSaving] = useState(false);
   const [saveErr, setSaveErr] = useState("");
   const [meanError, setMeanError] = useState<number | null>(null);
+  // enabled = 측정 표시 on/off (spec/decisions). 사용자가 토글로 정하고 PUT payload 로 저장.
+  const [enabled, setEnabled] = useState(true);
   // 스냅샷 img 의 natural 크기 — **state**(onLoad 시 set → re-render). 마커를 ref(getBoundingClientRect)
   // 로 그리면 복원 calibration(클릭 없는 경로)에서 ref=null/타이밍 문제로 안 뜬다. natSize 로
   // **퍼센트 위치**(natural px ÷ naturalW × 100%) 계산 → ref 무관, 복원·fresh 둘 다 항상 표시.
@@ -174,6 +233,10 @@ function CalibrationModal({ open, onClose, cameraName, snapshotUrl, initialState
   const [natSize, setNatSize] = useState<{ w: number; h: number } | null>(null);
   // 정밀 클릭용 십자선 가이드 — 마우스 위치(%). null = 이미지 밖.
   const [cross, setCross] = useState<{ x: number; y: number } | null>(null);
+  // .calib-img-wrap 렌더 크기 — 마커를 img 의 object-fit:contain rect 안에 정확히 놓기 위함
+  // (비-16:9 스냅샷의 letterbox/pillarbox 정렬, finding #3).
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [wrapSize, setWrapSize] = useState<{ w: number; h: number } | null>(null);
 
   // 스냅샷이 바뀌면 natSize 를 그 img 의 naturalWidth 가 준비되는 즉시 캡처한다.
   // **폴링** 방식 — onLoad/콜백ref/layoutEffect 타이밍에 의존하지 않아(복원 경로에서 그것들이
@@ -203,12 +266,25 @@ function CalibrationModal({ open, onClose, cameraName, snapshotUrl, initialState
     };
   }, [snapshotUrl]);
 
+  // .calib-img-wrap 렌더 크기 관측 — 마커 layer 를 img 의 contain rect 로 맞추기 위함.
+  // wrap 은 snapshotUrl 있을 때만 렌더 → [snapshotUrl] 후 ref 존재. ResizeObserver 로 반응형.
+  useEffect(() => {
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+    const measure = () => setWrapSize({ w: wrap.clientWidth, h: wrap.clientHeight });
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(wrap);
+    return () => ro.disconnect();
+  }, [snapshotUrl]);
+
   const resetState = useCallback(() => {
     setPoints([]);
     setDistances({});
     setStep("PLACING_POINTS");
     setSaveErr("");
     setMeanError(null);
+    setEnabled(true); // 새 calibration 기본 on (restore 시 아래 effect 가 저장값으로 덮음)
   }, []);
 
   // open 시 기존 calibration 복원(initialState). phase2 는 보통 null → 빈 상태.
@@ -216,6 +292,7 @@ function CalibrationModal({ open, onClose, cameraName, snapshotUrl, initialState
     if (!open) return;
     resetState();
     const data = initialState;
+    setEnabled(restoreEnabled(data)); // 저장된 측정 표시 on/off 복원(fresh 는 기본 on)
     if (data?.pixel_points && data.world_points) {
       const restored: CalibPoint[] = data.pixel_points.map((px, i) => ({
         px: [px[0], px[1]] as [number, number],
@@ -258,14 +335,7 @@ function CalibrationModal({ open, onClose, cameraName, snapshotUrl, initialState
   const removePoint = (idx: number) => {
     const newN = points.length - 1;
     setPoints((prev) => prev.filter((_, i) => i !== idx));
-    setDistances((prev) => {
-      const next: Record<string, string> = {};
-      for (const [a, b] of getRequiredPairs(newN)) {
-        const key = `${a}-${b}`;
-        if (prev[key]) next[key] = prev[key];
-      }
-      return next;
-    });
+    setDistances((prev) => remapDistancesAfterRemoval(prev, idx, newN));
     setSaveErr("");
     setMeanError(null);
     if (newN < MIN_POINTS) setStep("PLACING_POINTS");
@@ -307,11 +377,15 @@ function CalibrationModal({ open, onClose, cameraName, snapshotUrl, initialState
     setStep("SAVING");
     setSaving(true);
     try {
+      const nativeSize: [number, number] | null = natSize
+        ? [natSize.w, natSize.h]
+        : null;
       const { best: data, lastError } = await searchBestSignMask(
         baseWp,
         points.map((p) => p.px),
-        true, // enabled=true 하드코딩 — "측정 표시" 토글 제거(measure UI 없음), 계약 호환 유지
+        enabled, // 사용자가 토글한 측정 표시 on/off 를 그대로 저장(하드코딩 제거, finding #4)
         onSave,
+        nativeSize,
       );
       if (!data) {
         // 검증실패 구체 사유 표시(공선/중복/길이불일치 등) — 일반 메시지 대신 backend detail.
@@ -373,7 +447,7 @@ function CalibrationModal({ open, onClose, cameraName, snapshotUrl, initialState
           {!snapshotUrl ? (
             <p className="hint">스냅샷을 가져오는 중…</p>
           ) : (
-            <div className="calib-img-wrap">
+            <div className="calib-img-wrap" ref={wrapRef}>
               <img
                 ref={imgRef}
                 src={snapshotUrl}
@@ -404,22 +478,34 @@ function CalibrationModal({ open, onClose, cameraName, snapshotUrl, initialState
                   <div className="calib-cross-h" style={{ top: `${cross.y}%` }} />
                 </>
               )}
-              {/* 마커 = natSize(state) 기반 **퍼센트 위치** — ref/getBoundingClientRect 안 읽음.
-                  wrap 이 16:9 + 스냅샷 16:9 → object-fit:contain letterbox 0 → 퍼센트가 정확.
-                  복원·fresh 둘 다 natSize 만 있으면 항상 렌더(클릭 불필요). */}
+              {/* 마커 layer = img 의 object-fit:contain rect(natSize + wrapSize → containRect).
+                  마커는 그 layer 안에서 natural 퍼센트로 배치 → 비-16:9 스냅샷에서도
+                  letterbox/pillarbox 만큼 정확히 정렬(클릭 매핑과 동일 기하, finding #3).
+                  복원·fresh 둘 다 natSize·wrapSize 만 있으면 항상 렌더(클릭 불필요). */}
               {natSize &&
-                points.map((pt, i) => (
-                  <div
-                    key={i}
-                    className="calib-marker"
-                    style={{
-                      left: `${(pt.px[0] / natSize.w) * 100}%`,
-                      top: `${(pt.px[1] / natSize.h) * 100}%`,
-                    }}
-                  >
-                    {i + 1}
-                  </div>
-                ))}
+                wrapSize &&
+                (() => {
+                  const r = containRect(wrapSize.w, wrapSize.h, natSize.w, natSize.h);
+                  return (
+                    <div
+                      className="calib-marker-layer"
+                      style={{ left: r.left, top: r.top, width: r.width, height: r.height }}
+                    >
+                      {points.map((pt, i) => (
+                        <div
+                          key={i}
+                          className="calib-marker"
+                          style={{
+                            left: `${(pt.px[0] / natSize.w) * 100}%`,
+                            top: `${(pt.px[1] / natSize.h) * 100}%`,
+                          }}
+                        >
+                          {i + 1}
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
             </div>
           )}
           <div className="calib-badge">
@@ -496,8 +582,18 @@ function CalibrationModal({ open, onClose, cameraName, snapshotUrl, initialState
         </div>
       </div>
 
-      {/* "측정 표시 활성화" 토글 제거 — measure UI 없음. enabled 은 PUT 시 true 하드코딩(계약 호환).
-         점(마커)은 항상 표시(가리는 로직 없음). */}
+      {/* 측정 표시 on/off 토글 — 사용자 선택을 PUT payload(enabled)로 저장(finding #4).
+         off 로 저장하면 그리드/측정뷰가 homography 가 있어도 측정을 비활성화한다. */}
+      <label className="calib-enabled">
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={(e) => setEnabled(e.target.checked)}
+          disabled={saving}
+        />
+        측정 표시 활성화 (calibration on/off)
+      </label>
+
       {saveErr && <p className="form-error">{saveErr}</p>}
 
       <div className="modal-actions">

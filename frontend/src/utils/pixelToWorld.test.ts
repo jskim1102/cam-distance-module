@@ -59,4 +59,33 @@ describe("pixelToWorld", () => {
   it("returns null when homography is null (calibration unset)", () => {
     expect(pixelToWorld(null, 1, 1)).toBeNull();
   });
+
+  it("applies the backend-identical single-k1 correction before homography", () => {
+    const I = [
+      [1, 0, 0],
+      [0, 1, 0],
+      [0, 0, 1],
+    ];
+    const u = 1500;
+    const v = 800;
+    const k1 = 0.35;
+    const nativeSize: [number, number] = [1920, 1080];
+    const cx = nativeSize[0] / 2;
+    const cy = nativeSize[1] / 2;
+    const s = nativeSize[0] / 2;
+    const nx = (u - cx) / s;
+    const ny = (v - cy) / s;
+    const d = 1 + k1 * (nx * nx + ny * ny);
+
+    const result = pixelToWorld(I, u, v, k1, nativeSize);
+
+    expect(result![0]).toBeCloseTo(nx * d * s + cx, 12);
+    expect(result![1]).toBeCloseTo(ny * d * s + cy, 12);
+  });
+
+  it("keeps legacy behavior when k1 is zero or native size is unavailable", () => {
+    const legacy = pixelToWorld(H, 640, 480);
+    expect(pixelToWorld(H, 640, 480, 0, [1920, 1080])).toEqual(legacy);
+    expect(pixelToWorld(H, 640, 480, 0.35, null)).toEqual(legacy);
+  });
 });

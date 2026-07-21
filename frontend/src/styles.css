@@ -402,13 +402,13 @@ select {
   background: #000;
 }
 
-/* canvas-over-video 측정 오버레이 — video 와 동일하게 무대를 채워 스케일.
+/* canvas-over-video 측정 오버레이 — 위치·크기는 JS 가 video 의 object-fit:contain rect 로
+   inline 지정(비-16:9 letterbox/pillarbox 정렬, finding #3). 여기선 기준점만.
    BboxOverlay 와 달리 클릭을 받아야 하므로 pointer-events 유지(기본값). */
 .measure-overlay {
   position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
+  top: 0;
+  left: 0;
 }
 
 /* calibration 모달 — prime 다크 인라인스타일을 substrate 라이트 톤으로 재스킨.
@@ -464,6 +464,13 @@ select {
   width: 100%;
   height: 100%;
   object-fit: contain;
+}
+
+/* 마커 layer — img 의 object-fit:contain rect(JS inline left/top/width/height).
+   마커는 이 layer 기준 퍼센트로 배치돼 비-16:9 스냅샷에서도 정렬(finding #3). */
+.calib-marker-layer {
+  position: absolute;
+  pointer-events: none;
 }
 
 .calib-marker {

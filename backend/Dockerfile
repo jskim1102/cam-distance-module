@@ -8,11 +8,13 @@ FROM python:3.11-slim
 # -----------------------------------------------------------------------------
 # 시스템 패키지
 #   - libglib2.0-0 : opencv-python-headless 런타임 의존 (GLib)
+#   - ffmpeg       : ffprobe 로 등록 시점 카메라 코덱 감지 (h264=passthrough/else=libx264 결정)
 #   (torch 의 libgomp1, usbutils 는 비대상 — 추론/USB 웹캠 제거)
 # -----------------------------------------------------------------------------
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         libglib2.0-0 \
+        ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -37,7 +39,7 @@ COPY alembic.ini ./
 COPY docker-entrypoint.sh ./
 # 테스트 — phase3 검증이 컨테이너 안에서 pytest 실행(docker compose exec backend pytest).
 COPY tests ./tests
-RUN chmod +x docker-entrypoint.sh
+RUN sed -i 's/\r$//' docker-entrypoint.sh && chmod +x docker-entrypoint.sh
 
 EXPOSE 8000
 

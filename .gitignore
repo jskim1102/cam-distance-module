@@ -32,3 +32,8 @@ dist/
 .DS_Store
 *.log
 .gstack/
+
+# host dev 러너 (dev.sh) — 런타임 산출물
+.dev.pids
+.dev-logs/
+.analysis/

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { videoClientToNatural } from "../utils/videoCoords";
-import { pixelToWorld, pixelToWorldPoly, type Poly } from "../utils/pixelToWorld";
+import { videoClientToNatural, containRect } from "../utils/videoCoords";
+import { pixelToWorld } from "../utils/pixelToWorld";
 
 /**
  * WHEP `<video>` 위에 절대 위치 `<canvas>` 로 거리 측정 오버레이.
@@ -19,13 +19,15 @@ interface Props {
   videoRef: React.RefObject<HTMLVideoElement | null>;
   // 저장된 homography(픽셀→월드 m). null 이면 측정 비활성(클릭 무시).
   homography: number[][] | null;
-  // 2차 다항식 매핑(어안 왜곡 보정). 있으면 측정에 homography 대신 우선 사용.
-  poly?: Poly | null;
+  // 서버가 calibration 점으로 fit한 단일 radial 계수. legacy state는 0.
+  k1?: number;
 }
 
-function MeasureOverlay({ videoRef, homography, poly = null }: Props) {
+function MeasureOverlay({ videoRef, homography, k1 = 0 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [size, setSize] = useState<{ w: number; h: number } | null>(null);
+  // 무대(stage) 렌더 픽셀 크기 — canvas 를 video 의 object-fit:contain rect 에 정확히 겹치기 위함.
+  const [stage, setStage] = useState<{ w: number; h: number } | null>(null);
   // 현재 측정의 클릭 점(natural px). 0개→1개→2개(완료) → 다음 클릭은 reset 후 1개.
   const [pts, setPts] = useState<[number, number][]>([]);
 
@@ -46,6 +48,18 @@ function MeasureOverlay({ videoRef, homography, poly = null }: Props) {
     if (video.videoWidth) onMeta();
     return () => video.removeEventListener("loadedmetadata", onMeta);
   }, [videoRef]);
+
+  // 무대(canvas 부모, position:relative) 렌더 크기 관측 — resize/letterbox 변화에 따라 갱신.
+  // canvas 는 size 준비 후에만 렌더되므로 [size] 후 parent 존재. ResizeObserver 로 반응형 유지.
+  useEffect(() => {
+    const parent = canvasRef.current?.parentElement;
+    if (!parent) return;
+    const measure = () => setStage({ w: parent.clientWidth, h: parent.clientHeight });
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(parent);
+    return () => ro.disconnect();
+  }, [size]);
 
   // 그리기 — 2점 완료 시 노란선 + "X.XX m" 라벨, 1점은 점 마커.
   useEffect(() => {
@@ -82,8 +96,9 @@ function MeasureOverlay({ videoRef, homography, poly = null }: Props) {
     ctx.stroke();
 
     // 거리(m) — pixel→world 두 점 euclidean (BboxOverlay L140-142 의 euclidean).
-    const wa = poly ? pixelToWorldPoly(poly, a[0], a[1]) : pixelToWorld(homography, a[0], a[1]);
-    const wb = poly ? pixelToWorldPoly(poly, b[0], b[1]) : pixelToWorld(homography, b[0], b[1]);
+    const nativeSize: [number, number] = [size.w, size.h];
+    const wa = pixelToWorld(homography, a[0], a[1], k1, nativeSize);
+    const wb = pixelToWorld(homography, b[0], b[1], k1, nativeSize);
     const txt =
       wa && wb
         ? `${Math.sqrt((wa[0] - wb[0]) ** 2 + (wa[1] - wb[1]) ** 2).toFixed(2)} m`
@@ -100,7 +115,7 @@ function MeasureOverlay({ videoRef, homography, poly = null }: Props) {
     ctx.fillRect(mx - tw / 2 - padX, my - labelH / 2, tw + padX * 2, labelH);
     ctx.fillStyle = "#000000";
     ctx.fillText(txt, mx - tw / 2, my - labelH / 2 + padY);
-  }, [pts, size, homography, poly]);
+  }, [pts, size, homography, k1]);
 
   // 클릭 → natural px. 2점 완료 상태에서 클릭하면 새 측정(reset).
   const handleClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -114,13 +129,21 @@ function MeasureOverlay({ videoRef, homography, poly = null }: Props) {
 
   if (!size) return null;
 
+  // canvas 내부 해상도는 natural px 유지(그리기 좌표 불변). CSS box 는 video 의 contain rect
+  // 로 지정 → 비-16:9 에서 letterbox/pillarbox 만큼 정확히 겹쳐 그린다(finding #3).
+  // stage 측정 전엔 무대 전체로 폴백(첫 프레임 잠깐, aspect 동일하면 동일 결과).
+  const rect = stage ? containRect(stage.w, stage.h, size.w, size.h) : null;
+  const boxStyle: React.CSSProperties = rect
+    ? { left: rect.left, top: rect.top, width: rect.width, height: rect.height }
+    : { left: 0, top: 0, width: "100%", height: "100%" };
+
   return (
     <canvas
       ref={canvasRef}
       width={size.w}
       height={size.h}
       className="measure-overlay"
-      style={{ cursor: homography ? "crosshair" : "default" }}
+      style={{ ...boxStyle, cursor: homography ? "crosshair" : "default" }}
       onClick={handleClick}
     />
   );

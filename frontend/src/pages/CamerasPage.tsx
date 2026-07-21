@@ -21,9 +21,11 @@ const MAX_IPCAMS_FALLBACK = 16; // spec F4 — /api/config 로딩 전 기본값.
 interface Props {
   // calibration 버튼 → App 이 풀페이지 CalibrationPage 로 전환.
   onCalibrate: (cam: Cam) => void;
+  // 측정 버튼 → App 이 단일 카메라 측정 뷰(MeasurePage)로 전환 (F5).
+  onMeasure: (cam: Cam) => void;
 }
 
-export default function CamerasPage({ onCalibrate }: Props) {
+export default function CamerasPage({ onCalibrate, onMeasure }: Props) {
   const [cams, setCams] = useState<Cam[]>([]);
   const [stats, setStats] = useState<Record<string, Stat>>({});
   // 실측 FPS — 그리드의 WhepPlayer 가 WebRTC getStats 로 올려주는 카메라별 디코딩 프레임레이트.
@@ -86,18 +88,16 @@ export default function CamerasPage({ onCalibrate }: Props) {
     setFps((prev) => ({ ...prev, [key]: f }));
   }, []);
 
-  async function handleSave(name: string, rtspUrl: string) {
-    setError("");
+  // onSave 계약: 성공이면 null, 실패면 에러메시지(모달이 표시·열린 채 유지). POST 가
+  // register-time ffprobe 로 수 초 걸릴 수 있어, 호출측(모달)이 await 하며 로딩상태를 보인다.
+  async function handleSave(name: string, rtspUrl: string): Promise<string | null> {
     if (editCam) {
       const resp = await fetch(`${apiBase()}/api/ipcams/${editCam.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, rtsp_url: rtspUrl }),
       });
-      if (!resp.ok) {
-        setError("카메라 수정에 실패했습니다.");
-        return;
-      }
+      if (!resp.ok) return "카메라 수정에 실패했습니다.";
     } else {
       const resp = await fetch(`${apiBase()}/api/ipcams`, {
         method: "POST",
@@ -106,15 +106,12 @@ export default function CamerasPage({ onCalibrate }: Props) {
       });
       if (resp.status === 409) {
         const body = await resp.json().catch(() => ({}));
-        setError(body.detail ?? `최대 ${maxIpcams}대까지 등록할 수 있습니다`);
-        return;
+        return body.detail ?? `최대 ${maxIpcams}대까지 등록할 수 있습니다`;
       }
-      if (!resp.ok) {
-        setError("카메라 등록에 실패했습니다.");
-        return;
-      }
+      if (!resp.ok) return "카메라 등록에 실패했습니다.";
     }
     await fetchCams();
+    return null;
   }
 
   async function deleteCam(cam: Cam) {
@@ -190,6 +187,7 @@ export default function CamerasPage({ onCalibrate }: Props) {
                 </td>
                 <td>{active && fps[cam.stream_key] != null ? fps[cam.stream_key].toFixed(1) : "—"}</td>
                 <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                  <button onClick={() => onMeasure(cam)}>측정</button>{" "}
                   <button onClick={() => onCalibrate(cam)}>calibration</button>{" "}
                   <button
                     onClick={() => {

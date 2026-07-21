@@ -73,6 +73,10 @@ def test_get_unset_returns_default_state(client):
     body = resp.json()
     assert body["enabled"] is False
     assert body["homography"] is None
+    assert body["k1"] == 0.0
+    assert body["native_size"] is None
+    # homography-only 계약 — 응답에 다항식 필드는 없다.
+    assert not any(k.startswith("poly_") for k in body)
 
 
 def test_get_unknown_key_404(client):
@@ -92,11 +96,50 @@ def test_put_computes_and_persists_homography(client):
     assert len(body["homography"]) == 3 and len(body["homography"][0]) == 3
     assert body["mean_reprojection_error"] < 1e-6
     assert body["inlier_mask"] == [1, 1, 1, 1]
+    assert body["k1"] == 0.0
+    assert body["native_size"] is None
+    # homography-only 계약 — 저장/반환에 다항식 필드는 없다.
+    assert not any(k.startswith("poly_") for k in body)
 
     # GET 으로 영속 확인 — 저장된 H 가 그대로 복원된다.
     got = client.get(f"/api/ipcams/{key}/calibration").json()
     assert got["homography"] == body["homography"]
     assert got["enabled"] is True
+    assert got["k1"] == 0.0
+    assert got["native_size"] is None
+    assert not any(k.startswith("poly_") for k in got)
+
+
+def test_put_persists_native_size_and_fitted_k1(client):
+    key = _make_cam(client)
+    pixel = [
+        [825, 988], [1504, 809], [757, 677], [1283, 593],
+        [726, 509], [1136, 462], [705, 404], [1046, 372],
+        [696, 344], [980, 319], [691, 298], [929, 278],
+    ]
+    world = [
+        [0, 0], [1.8, 0], [0, 1.35], [1.8, 1.35],
+        [0, 2.7], [1.8, 2.7], [0, 4.05], [1.8, 4.05],
+        [-0.006, 5.398], [1.8, 5.4], [0, 6.75], [1.8, 6.75],
+    ]
+
+    resp = client.put(
+        f"/api/ipcams/{key}/calibration",
+        json={
+            "pixel_points": pixel,
+            "world_points": world,
+            "enabled": True,
+            "native_size": [1920, 1080],
+        },
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert 0.30 < body["k1"] < 0.41
+    assert body["native_size"] == [1920.0, 1080.0]
+    got = client.get(f"/api/ipcams/{key}/calibration").json()
+    assert got["k1"] == body["k1"]
+    assert got["native_size"] == body["native_size"]
 
 
 def test_put_unknown_key_404(client):

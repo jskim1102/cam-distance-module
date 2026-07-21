@@ -5,32 +5,39 @@ interface Props {
   open: boolean;
   editCam: Cam | null;
   onClose: () => void;
-  onSave: (name: string, rtspUrl: string) => void;
+  onSave: (name: string, rtspUrl: string) => Promise<string | null>;
 }
 
 export default function CameraFormModal({ open, editCam, onClose, onSave }: Props) {
   const [name, setName] = useState("");
   const [rtspUrl, setRtspUrl] = useState("");
   const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     if (open) {
       setName(editCam?.name ?? "");
       setRtspUrl(editCam?.rtsp_url ?? "");
       setError("");
+      setSubmitting(false);
     }
   }, [open, editCam]);
 
   if (!open) return null;
 
-  // onSave 는 부모(CamerasPage)에서 POST/PUT /api/ipcams 로 처리한다.
-  function handleSubmit() {
+  // onSave 는 부모(CamerasPage)에서 POST/PUT /api/ipcams 로 처리한다(성공=null, 실패=메시지).
+  // register 시 백엔드가 ffprobe 로 코덱감지(수 초)하므로, await 동안 버튼을 '등록 중…'+disable 로
+  // 잠가 진행 중임을 보인다. 성공 시 닫고, 실패 시 메시지 표시 + 열린 채 유지(재시도).
+  async function handleSubmit() {
     if (!name.trim() || !rtspUrl.trim()) {
       setError("이름과 RTSP URL을 입력하세요.");
       return;
     }
-    onSave(name.trim(), rtspUrl.trim());
-    onClose();
+    setSubmitting(true);
+    const err = await onSave(name.trim(), rtspUrl.trim());
+    setSubmitting(false);
+    if (err) setError(err);
+    else onClose();
   }
 
   return (
@@ -68,9 +75,9 @@ export default function CameraFormModal({ open, editCam, onClose, onSave }: Prop
         {error && <p className="form-error">{error}</p>}
 
         <div className="modal-actions">
-          <button onClick={onClose}>취소</button>
-          <button className="primary" onClick={handleSubmit}>
-            {editCam ? "저장" : "등록"}
+          <button onClick={onClose} disabled={submitting}>취소</button>
+          <button className="primary" onClick={handleSubmit} disabled={submitting}>
+            {submitting ? (editCam ? "저장 중…" : "등록 중…") : editCam ? "저장" : "등록"}
           </button>
         </div>
       </div>

@@ -30,6 +30,7 @@ export default function MeasurePage({ cam, onClose }: Props) {
   const [snapshot, setSnapshot] = useState<string | null>(null);
   // 저장된 homography(GET/PUT 결과) — MeasureOverlay 주입용.
   const [homography, setHomography] = useState<number[][] | null>(null);
+  const [k1, setK1] = useState(0);
   const [calibEnabled, setCalibEnabled] = useState(false);
   // 모달 open 시 GET 으로 복원한 기존 calibration — CalibrationModal initialState.
   const [initialState, setInitialState] = useState<CalibrationState | null>(null);
@@ -42,6 +43,7 @@ export default function MeasurePage({ cam, onClose }: Props) {
       const state: CalibrationState = await resp.json();
       setInitialState(state);
       setHomography(state.homography);
+      setK1(state.k1 ?? 0);
       setCalibEnabled(state.enabled);
     } catch {
       // 백엔드/네트워크 오류 — 측정뷰는 calibration 없이도 로드(클릭만 비활성).
@@ -126,6 +128,7 @@ export default function MeasurePage({ cam, onClose }: Props) {
       const state: CalibrationState = await resp.json();
       // best 조합이 모달에서 확정되면 이 state 가 마지막으로 저장된 값 — overlay 에 반영.
       setHomography(state.homography);
+      setK1(state.k1 ?? 0);
       setCalibEnabled(state.enabled);
       return state;
     } catch {
@@ -172,7 +175,11 @@ export default function MeasurePage({ cam, onClose }: Props) {
       <div className={tab === "measure" ? "measure-stage" : "measure-stage measure-stage-offscreen"}>
         <WhepPlayer ref={videoRef} streamKey={cam.stream_key} />
         {tab === "measure" && (
-          <MeasureOverlay videoRef={videoRef} homography={calibEnabled ? homography : null} />
+          <MeasureOverlay
+            videoRef={videoRef}
+            homography={calibEnabled ? homography : null}
+            k1={k1}
+          />
         )}
       </div>
 

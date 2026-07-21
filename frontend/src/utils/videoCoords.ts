@@ -54,3 +54,38 @@ export function videoClientToNatural(
 
   return [localX / scale, localY / scale];
 }
+
+// Forward of videoClientToNatural: given the element's rendered box (containerW×containerH)
+// and the media's natural size, return the object-fit: contain content rect (letterbox
+// geometry) as {left, top, width, height} in the element's local px. Overlays (measure
+// canvas, calibration markers) must be placed INSIDE this rect so they line up with the
+// contained media on non-16:9 streams — the exact letterbox/pillarbox offset the click
+// mapping above already compensates for. Placing them over the raw wrapper stretches them
+// into the bars (finding #3).
+export interface ContainRect {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+export function containRect(
+  containerW: number,
+  containerH: number,
+  naturalW: number,
+  naturalH: number,
+): ContainRect {
+  // 미디어/컨테이너 크기 미확정이면 컨테이너 전체를 반환(측정 불가 상태의 안전한 기본).
+  if (naturalW <= 0 || naturalH <= 0 || containerW <= 0 || containerH <= 0) {
+    return { left: 0, top: 0, width: containerW, height: containerH };
+  }
+  const scale = Math.min(containerW / naturalW, containerH / naturalH);
+  const width = naturalW * scale;
+  const height = naturalH * scale;
+  return {
+    left: (containerW - width) / 2,
+    top: (containerH - height) / 2,
+    width,
+    height,
+  };
+}

@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useRef, useState } from "react";
-import { whepBase } from "../hooks/useApi";
+import { whepBase, whepAuthHeaders } from "../hooks/useApi";
 
 interface Props {
   streamKey: string;
@@ -63,7 +63,7 @@ const WhepPlayer = forwardRef<HTMLVideoElement, Props>(function WhepPlayer(
 
         const resp = await fetch(`${whepBase()}/${streamKey}/whep`, {
           method: "POST",
-          headers: { "Content-Type": "application/sdp" },
+          headers: { "Content-Type": "application/sdp", ...whepAuthHeaders() },
           body: offer.sdp,
         });
         if (!resp.ok) throw new Error(`WHEP ${resp.status}`);
