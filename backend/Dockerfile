@@ -36,13 +36,16 @@ RUN pip install -r requirements.txt
 COPY app ./app
 COPY alembic ./alembic
 COPY alembic.ini ./
-COPY docker-entrypoint.sh ./
+COPY --chmod=0755 docker-entrypoint.sh /app/docker-entrypoint.sh
 # 테스트 — phase3 검증이 컨테이너 안에서 pytest 실행(docker compose exec backend pytest).
 COPY tests ./tests
-RUN sed -i 's/\r$//' docker-entrypoint.sh && chmod +x docker-entrypoint.sh
+# Git 설정을 무시한 Windows checkout도 복구한다. CRLF/CR과 UTF-8 BOM을
+# 이미지 안에서 제거하고, COPY --chmod로 호스트 파일 모드에 의존하지 않는다.
+RUN python -c "from pathlib import Path; p=Path('/app/docker-entrypoint.sh'); data=p.read_bytes().removeprefix(b'\xef\xbb\xbf').replace(b'\r\n', b'\n').replace(b'\r', b'\n'); p.write_bytes(data)"
 
 EXPOSE 8000
 
-# 기동 시 alembic upgrade head 로 스키마 적용 후 uvicorn (init_db create_all 아님).
-ENTRYPOINT ["./docker-entrypoint.sh"]
+# 절대경로의 /bin/sh로 실행해 shebang·호스트 실행권한에 의존하지 않는다.
+# 스크립트의 exec "$@"가 uvicorn을 PID 1로 교체한다.
+ENTRYPOINT ["/bin/sh", "/app/docker-entrypoint.sh"]
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
