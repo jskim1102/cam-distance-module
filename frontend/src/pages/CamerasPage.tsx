@@ -125,90 +125,134 @@ export default function CamerasPage({ onCalibrate, onMeasure }: Props) {
   }
 
   return (
-    <main className="app">
-      <header className="page-head">
-        <div>
-          <h1>Cam-distance</h1>
-          <p className="subtitle">카메라 관리</p>
+    <>
+      <header className="topbar">
+        <div className="topbar-title">
+          <h1>실시간 모니터</h1>
+          <span className="hint">카메라 연결 상태와 거리 측정 화면을 관리합니다.</span>
         </div>
-        <button
-          className="primary"
-          disabled={atCap}
-          onClick={() => {
-            setEditCam(null);
-            setFormOpen(true);
-          }}
-        >
-          + 카메라 등록
-        </button>
+        <div className="topbar-right">
+          <div className="sysbar" role="status">
+            <span className={online === cams.length && cams.length > 0 ? "sysbar-state ok" : "sysbar-state warn"}>
+              <i className="sysbar-dot" />{online === cams.length && cams.length > 0 ? "시스템 정상" : "상태 확인"}
+            </span>
+            <span className="sysbar-sep">·</span>
+            <span className="sysbar-item mono">온라인 {online}/{cams.length}</span>
+          </div>
+          <button
+            className="btn primary"
+            disabled={atCap}
+            onClick={() => {
+              setEditCam(null);
+              setFormOpen(true);
+            }}
+          >
+            ＋ 카메라 등록
+          </button>
+        </div>
       </header>
 
-      {error && <p className="form-error">{error}</p>}
+      <div className="content cameras-content">
+        {error && <p className="form-error">{error}</p>}
 
-      <section className="summary">
-        <div className="summary-cell">
-          <div className="summary-label">전체 카메라</div>
-          <div className="summary-value">{cams.length}</div>
-        </div>
-        <div className="summary-cell">
-          <div className="summary-label">온라인</div>
-          <div className="summary-value">
-            {online}
-            <span className="summary-sub"> / {cams.length}</span>
+        <section className="kpis" aria-label="카메라 현황">
+          <div className="panel kpi">
+            <div className="kpi-label">전체 카메라</div>
+            <div className="kpi-value">{cams.length}<span className="kpi-sub"> 대</span></div>
+            <div className="hint">등록된 스트림</div>
           </div>
-        </div>
-      </section>
+          <div className="panel kpi kpi-ok">
+            <div className="kpi-label">온라인</div>
+            <div className="kpi-value">{online}<span className="kpi-sub"> 대</span></div>
+            <div className="hint">영상 수신 가능</div>
+          </div>
+          <div className="panel kpi kpi-muted">
+            <div className="kpi-label">오프라인</div>
+            <div className="kpi-value">{cams.length - online}<span className="kpi-sub"> 대</span></div>
+            <div className="hint">연결 확인 필요</div>
+          </div>
+          <div className="panel kpi">
+            <div className="kpi-label">등록 용량</div>
+            <div className="kpi-value">{cams.length}<span className="kpi-sub"> / {maxIpcams}</span></div>
+            <div className="hint">최대 카메라 수</div>
+          </div>
+        </section>
 
-      <table>
-        <thead>
-          <tr>
-            <th style={{ width: 180 }}>카메라</th>
-            <th>RTSP URL</th>
-            <th style={{ width: 110 }}>상태</th>
-            <th style={{ width: 80 }}>FPS</th>
-            <th style={{ width: 140, textAlign: "right" }}>관리</th>
-          </tr>
-        </thead>
-        <tbody>
-          {cams.map((cam) => {
-            const st = stats[cam.stream_key];
-            const active = st?.active ?? false;
-            return (
-              <tr key={cam.id}>
-                <td>
-                  <div className="cam-id">CAM-{String(cam.id).padStart(2, "0")}</div>
-                  <div className="cam-name">{cam.name}</div>
-                </td>
-                <td className="url-cell">{cam.rtsp_url}</td>
-                <td>
-                  <span className={active ? "status status-on" : "status status-off"}>
-                    {active ? "● 온라인" : "● 오프라인"}
-                  </span>
-                </td>
-                <td>{active && fps[cam.stream_key] != null ? fps[cam.stream_key].toFixed(1) : "—"}</td>
-                <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                  <button onClick={() => onMeasure(cam)}>측정</button>{" "}
-                  <button onClick={() => onCalibrate(cam)}>calibration</button>{" "}
-                  <button
-                    onClick={() => {
-                      setEditCam(cam);
-                      setFormOpen(true);
-                    }}
-                  >
-                    수정
-                  </button>{" "}
-                  <button className="danger" onClick={() => deleteCam(cam)}>
-                    삭제
-                  </button>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+        <section className="panel table-panel camera-table-panel">
+          <div className="panel-head row-between">
+            <strong>카메라 목록</strong>
+            <span className="hint">상태는 1초마다 자동 갱신</span>
+          </div>
+          <div className="table-wrap">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th style={{ width: 180 }}>카메라</th>
+                  <th>RTSP URL</th>
+                  <th style={{ width: 110 }}>상태</th>
+                  <th style={{ width: 80 }}>FPS</th>
+                  <th style={{ width: 250, textAlign: "right" }}>관리</th>
+                </tr>
+              </thead>
+              <tbody>
+                {cams.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="empty-cell">등록된 카메라가 없습니다.</td>
+                  </tr>
+                )}
+                {cams.map((cam) => {
+                  const st = stats[cam.stream_key];
+                  const active = st?.active ?? false;
+                  return (
+                    <tr key={cam.id}>
+                      <td>
+                        <div className="cam-id">CAM-{String(cam.id).padStart(2, "0")}</div>
+                        <div className="cam-name">{cam.name}</div>
+                      </td>
+                      <td className="url-cell" title={cam.rtsp_url}>{cam.rtsp_url}</td>
+                      <td>
+                        <span className={active ? "status status-on" : "status status-off"}>
+                          <i className="dot" />{active ? "온라인" : "오프라인"}
+                        </span>
+                      </td>
+                      <td className="mono">{active && fps[cam.stream_key] != null ? fps[cam.stream_key].toFixed(1) : "—"}</td>
+                      <td className="table-actions">
+                        <button className="btn sm" onClick={() => onMeasure(cam)}>측정</button>
+                        <button className="btn sm" onClick={() => onCalibrate(cam)}>기준점</button>
+                        <button
+                          className="btn sm"
+                          onClick={() => {
+                            setEditCam(cam);
+                            setFormOpen(true);
+                          }}
+                        >
+                          수정
+                        </button>
+                        <button className="btn sm danger" onClick={() => deleteCam(cam)}>
+                          삭제
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
 
-      <h2 className="grid-heading">실시간 그리드</h2>
-      <CameraGrid cams={cams} onFps={handleFps} />
+        <section className="panel live-grid-panel">
+          <div className="panel-head row-between">
+            <div>
+              <h2>실시간 카메라</h2>
+              <p className="hint">캘리브레이션이 완료된 영상은 바로 확대 측정할 수 있습니다.</p>
+            </div>
+            <span className="badge none">{cams.length} CH</span>
+          </div>
+          <div className="live-grid-body">
+            <CameraGrid cams={cams} onFps={handleFps} />
+          </div>
+        </section>
+      </div>
 
       <CameraFormModal
         open={formOpen}
@@ -216,6 +260,6 @@ export default function CamerasPage({ onCalibrate, onMeasure }: Props) {
         onClose={() => setFormOpen(false)}
         onSave={handleSave}
       />
-    </main>
+    </>
   );
 }

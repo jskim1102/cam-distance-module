@@ -20,8 +20,10 @@ export default function Modal({ open, onClose, title, maxWidth, children }: Prop
         style={maxWidth ? { maxWidth } : undefined}
         onClick={(e) => e.stopPropagation()}
       >
-        <h2>{title}</h2>
-        {children}
+        <div className="modal-head">
+          <div className="modal-title"><h2>{title}</h2></div>
+        </div>
+        <div className="modal-body">{children}</div>
       </div>
     </div>
   );

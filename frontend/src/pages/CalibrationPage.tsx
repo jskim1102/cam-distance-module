@@ -137,39 +137,47 @@ export default function CalibrationPage({ cam, onBack }: Props) {
   }
 
   return (
-    <main className="app calib-page">
-      <header className="page-head">
-        <div>
-          <h1>기준점 설정 (calibration)</h1>
-          <p className="subtitle">
-            CAM-{String(cam.id).padStart(2, "0")} · {cam.name}
-          </p>
+    <>
+      <header className="topbar">
+        <div className="topbar-title">
+          <h1>기준점 설정</h1>
+          <span className="hint">CAM-{String(cam.id).padStart(2, "0")} · {cam.name}</span>
         </div>
-        <button onClick={onBack}>← 목록</button>
+        <div className="topbar-right">
+          <button className="btn" onClick={onBack}>← 카메라 목록</button>
+        </div>
       </header>
 
-      {/* WHEP <video> 를 페이지에 항상 마운트(디코딩 유지 → 실 프레임 grab). 화면엔 작게 보이는
-          라이브 프리뷰로 두고, 큰 picking 영역은 grab 한 스냅샷(CalibrationModal inline). */}
-      <div className="calib-live-preview">
-        <WhepPlayer ref={videoRef} streamKey={cam.stream_key} />
+      <div className="content calibration-content">
+        <section className="panel pad calib-page">
+          <div className="calib-toolbar row-between">
+            <div>
+              <strong>라이브 프리뷰</strong>
+              <p className="hint">현재 프레임을 캡처한 뒤 기준점을 배치합니다.</p>
+            </div>
+            <button className="btn" onClick={regrabSnapshot}>현재 프레임으로 갱신</button>
+          </div>
+
+          {/* WHEP <video> 를 페이지에 항상 마운트(디코딩 유지 → 실 프레임 grab). 화면엔 작게 보이는
+              라이브 프리뷰로 두고, 큰 picking 영역은 grab 한 스냅샷(CalibrationModal inline). */}
+          <div className="calib-live-preview">
+            <WhepPlayer ref={videoRef} streamKey={cam.stream_key} />
+          </div>
+
+          {savedMsg && <p className="calib-result">{savedMsg}</p>}
+
+          <CalibrationModal
+            open
+            inline
+            onClose={onBack}
+            cameraName={cam.name}
+            snapshotUrl={snapshot}
+            initialState={initialState}
+            onSave={handleCalibSave}
+            onSaved={() => setSavedMsg("저장되었습니다. 기준점이 적용되었습니다.")}
+          />
+        </section>
       </div>
-
-      <div className="calib-actions">
-        <button onClick={regrabSnapshot}>현재 프레임으로 스냅샷 갱신</button>
-      </div>
-
-      {savedMsg && <p className="calib-result">{savedMsg}</p>}
-
-      <CalibrationModal
-        open
-        inline
-        onClose={onBack}
-        cameraName={cam.name}
-        snapshotUrl={snapshot}
-        initialState={initialState}
-        onSave={handleCalibSave}
-        onSaved={() => setSavedMsg("저장되었습니다. 기준점이 적용되었습니다.")}
-      />
-    </main>
+    </>
   );
 }

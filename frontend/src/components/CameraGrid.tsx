@@ -42,6 +42,11 @@ function GridCell({
       >
         📏 거리측정
       </button>
+      <div className="cam-cell-bar">
+        <span className="cam-cell-channel">CAM</span>
+        <span className="cam-cell-name">{cam.name}</span>
+        <span className="cam-cell-id">CAM-{String(cam.id).padStart(2, "0")}</span>
+      </div>
     </div>
   );
 }

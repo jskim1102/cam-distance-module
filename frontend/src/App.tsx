@@ -13,20 +13,38 @@ type View =
 export default function App() {
   const [view, setView] = useState<View>({ name: "cameras" });
 
-  if (view.name === "calibration") {
-    return (
-      <CalibrationPage cam={view.cam} onBack={() => setView({ name: "cameras" })} />
-    );
-  }
-  if (view.name === "measure") {
-    return (
-      <MeasurePage cam={view.cam} onClose={() => setView({ name: "cameras" })} />
-    );
-  }
+  const content = view.name === "calibration"
+    ? <CalibrationPage cam={view.cam} onBack={() => setView({ name: "cameras" })} />
+    : view.name === "measure"
+      ? <MeasurePage cam={view.cam} onClose={() => setView({ name: "cameras" })} />
+      : (
+        <CamerasPage
+          onCalibrate={(cam) => setView({ name: "calibration", cam })}
+          onMeasure={(cam) => setView({ name: "measure", cam })}
+        />
+      );
+
   return (
-    <CamerasPage
-      onCalibrate={(cam) => setView({ name: "calibration", cam })}
-      onMeasure={(cam) => setView({ name: "measure", cam })}
-    />
+    <div className="app">
+      <aside className="sidebar">
+        <div className="logo"><span aria-hidden="true">◈</span> cam-distance</div>
+        <nav className="sidebar-nav" aria-label="현재 화면">
+          <div className={view.name === "cameras" ? "sidebar-link active" : "sidebar-link"}>
+            실시간 모니터
+          </div>
+          <div className={view.name === "calibration" ? "sidebar-link active" : "sidebar-link"}>
+            기준점 설정
+          </div>
+          <div className={view.name === "measure" ? "sidebar-link active" : "sidebar-link"}>
+            거리 측정
+          </div>
+        </nav>
+        <div className="sidebar-foot">
+          <span className="sidebar-foot-label">MEASUREMENT MODULE</span>
+          <span>평면 기준 실세계 거리 측정</span>
+        </div>
+      </aside>
+      <div className="main">{content}</div>
+    </div>
   );
 }

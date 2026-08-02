@@ -42,41 +42,47 @@ export default function CameraFormModal({ open, editCam, onClose, onSave }: Prop
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h2>{editCam ? "카메라 수정" : "카메라 등록"}</h2>
-
-        <div className="field">
-          <label>카메라 이름</label>
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="예: 정문 입구 카메라"
-          />
+      <div className="modal modal-sm" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <div className="modal-title">
+            <h2>{editCam ? "카메라 수정" : "카메라 등록"}</h2>
+            <p className="hint">카메라 이름과 RTSP 연결 주소를 입력하세요.</p>
+          </div>
         </div>
+        <div className="modal-body">
+          <div className="field">
+            <label>카메라 이름</label>
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="예: 정문 입구 카메라"
+            />
+          </div>
 
-        <div className="field">
-          <label>RTSP URL</label>
-          <input
-            value={rtspUrl}
-            onChange={(e) => setRtspUrl(e.target.value)}
-            placeholder="rtsp://192.168.0.100:554/stream1"
-          />
-          <p className="hint">
-            형식 — rtsp://[user:pass@]IP:PORT/PATH · 지원 코덱 H.264 / H.265
-          </p>
-          {editCam && rtspUrl.includes(":***@") && (
+          <div className="field">
+            <label>RTSP URL</label>
+            <input
+              value={rtspUrl}
+              onChange={(e) => setRtspUrl(e.target.value)}
+              placeholder="rtsp://192.168.0.100:554/stream1"
+            />
             <p className="hint">
-              ⚠️ <code>***</code> = 기존 비밀번호 유지. 주소·포트·경로는 그대로 수정하면 반영됩니다.
-              비밀번호를 변경하려면 <code>***</code> 를 지우고 새 비밀번호를 입력하세요.
+              형식 — rtsp://[user:pass@]IP:PORT/PATH · 지원 코덱 H.264 / H.265
             </p>
-          )}
+            {editCam && rtspUrl.includes(":***@") && (
+              <p className="hint">
+                ⚠️ <code>***</code> = 기존 비밀번호 유지. 주소·포트·경로는 그대로 수정하면 반영됩니다.
+                비밀번호를 변경하려면 <code>***</code> 를 지우고 새 비밀번호를 입력하세요.
+              </p>
+            )}
+          </div>
+
+          {error && <p className="form-error">{error}</p>}
         </div>
-
-        {error && <p className="form-error">{error}</p>}
-
-        <div className="modal-actions">
-          <button onClick={onClose} disabled={submitting}>취소</button>
-          <button className="primary" onClick={handleSubmit} disabled={submitting}>
+        <div className="modal-foot">
+          <span className="spacer" />
+          <button className="btn" onClick={onClose} disabled={submitting}>취소</button>
+          <button className="btn primary" onClick={handleSubmit} disabled={submitting}>
             {submitting ? (editCam ? "저장 중…" : "등록 중…") : editCam ? "저장" : "등록"}
           </button>
         </div>

@@ -37,3 +37,7 @@ dist/
 .dev.pids
 .dev-logs/
 .analysis/
+
+# --- 대시보드에서 제외 (harness) ---
+/sample/
+/.source/
