@@ -49,3 +49,13 @@ def test_set_values_are_respected(monkeypatch):
     config = _reload_config(monkeypatch, MAX_IPCAMS="32", CORS_ORIGINS="http://example.com:5177")
     assert config.MAX_IPCAMS == 32
     assert config.CORS_ORIGINS == "http://example.com:5177"
+
+
+def test_empty_yolo_model_uses_yolo26x_default(monkeypatch):
+    config = _reload_config(monkeypatch, YOLO_DEFAULT_MODEL="")
+    assert config.YOLO_DEFAULT_MODEL == "yolo26x.pt"
+
+
+def test_explicit_yolo_model_override_is_respected(monkeypatch):
+    config = _reload_config(monkeypatch, YOLO_DEFAULT_MODEL="yolo26s.pt")
+    assert config.YOLO_DEFAULT_MODEL == "yolo26s.pt"

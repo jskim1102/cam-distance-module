@@ -28,11 +28,24 @@ services:
       # mediamtx 인증 — backend user. API/publish/read.
       MEDIAMTX_BACKEND_USER: ${MEDIAMTX_BACKEND_USER:-backend}
       MEDIAMTX_BACKEND_PASS: ${MEDIAMTX_BACKEND_PASS:?set MEDIAMTX_BACKEND_PASS in .env}
+      # 자동 거리측정용 YOLO. device 빈값이면 cuda:0/CPU를 자동 선택한다.
+      YOLO_DEFAULT_MODEL: ${YOLO_DEFAULT_MODEL:-yolo26x.pt}
+      YOLO_CONF_THRESHOLD: ${YOLO_CONF_THRESHOLD:-0.5}
+      YOLO_DEVICE: ${YOLO_DEVICE:-}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     ports:
       - "${BACKEND_PORT:?set BACKEND_PORT in .env}:8000"
     volumes:
       # SQLite DB 영속화 — named volume (원본 bind-mount `touch deepeye.db` 트랩 회피).
       - ipcam_db:/app/data
+      # YOLO preset 가중치 캐시 — 재시작 때 다시 받지 않는다.
+      - yolo_weights:/root/.cache/ultralytics
     networks:
       - cam-distance
     depends_on:
@@ -107,3 +120,4 @@ networks:
 
 volumes:
   ipcam_db:
+  yolo_weights:

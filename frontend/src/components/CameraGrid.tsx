@@ -1,11 +1,19 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import type { Cam } from "../pages/CamerasPage";
+import type { AutoMeasurement } from "../types/detection";
 import { apiBase } from "../hooks/useApi";
+import { useDetectionWs } from "../hooks/useDetectionWs";
 import { measurableHomography } from "../utils/calibrationGate";
+import DetectionDistanceOverlay from "./DetectionDistanceOverlay";
 import WhepPlayer from "./WhepPlayer";
 import MeasureFocusModal from "./MeasureFocusModal";
 
-type Calib = { homography: number[][] | null; enabled: boolean; k1: number };
+type Calib = {
+  homography: number[][] | null;
+  enabled: boolean;
+  k1: number;
+  nativeSize: [number, number] | null;
+};
 
 // 사용자 오버라이드(게이트2) — 1줄 최대 4칸, 4 채워지면 다음 줄로 wrap.
 function getGridColumns(count: number): number {
@@ -15,6 +23,7 @@ function getGridColumns(count: number): number {
 interface Props {
   cams: Cam[];
   onFps?: (streamKey: string, fps: number) => void;
+  autoMeasurements?: Record<string, AutoMeasurement>;
 }
 
 // 셀 = WhepPlayer(WebRTC) + 거리측정 토글(calibration 완료 카메라만 enable).
@@ -22,17 +31,48 @@ function GridCell({
   cam,
   onFps,
   homography,
+  k1,
+  nativeSize,
+  autoMeasurement,
   onMeasure,
 }: {
   cam: Cam;
   onFps?: (streamKey: string, fps: number) => void;
   homography: number[][] | null;
+  k1: number;
+  nativeSize: [number, number] | null;
+  autoMeasurement: AutoMeasurement | undefined;
   onMeasure: () => void;
 }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
   const calibrated = homography != null;
+  const autoActive = Boolean(
+    calibrated &&
+      autoMeasurement?.enabled &&
+      autoMeasurement.classes.length >= 1 &&
+      autoMeasurement.classes.length <= 2,
+  );
+  const detection = useDetectionWs(cam.stream_key, autoActive);
+
   return (
     <div className="grid-cell">
-      <WhepPlayer streamKey={cam.stream_key} onFps={(fps) => onFps?.(cam.stream_key, fps)} />
+      <WhepPlayer
+        ref={videoRef}
+        streamKey={cam.stream_key}
+        onFps={(fps) => onFps?.(cam.stream_key, fps)}
+      />
+      {autoActive && homography && autoMeasurement && (
+        <DetectionDistanceOverlay
+          videoRef={videoRef}
+          detections={detection.items}
+          frameW={detection.frameW}
+          frameH={detection.frameH}
+          selectedClasses={autoMeasurement.classes}
+          homography={homography}
+          k1={k1}
+          nativeSize={nativeSize}
+        />
+      )}
       {/* 거리측정 토글 — calibration 없으면 disabled. ON 시 focus 확대 모달. */}
       <button
         className="grid-measure-toggle"
@@ -51,7 +91,7 @@ function GridCell({
   );
 }
 
-export default function CameraGrid({ cams, onFps }: Props) {
+export default function CameraGrid({ cams, onFps, autoMeasurements = {} }: Props) {
   // 카메라별 calibration — GET. homography + enabled(측정 표시 on/off gate). null=미설정.
   const [calibs, setCalibs] = useState<Record<string, Calib>>({});
   // 거리측정 focus 대상 카메라(null=닫힘).
@@ -63,16 +103,25 @@ export default function CameraGrid({ cams, onFps }: Props) {
       cams.map(async (c) => {
         try {
           const resp = await fetch(`${apiBase()}/api/ipcams/${c.stream_key}/calibration`);
-          if (!resp.ok) return [c.stream_key, { homography: null, enabled: false, k1: 0 }] as const;
+          if (!resp.ok) {
+            return [
+              c.stream_key,
+              { homography: null, enabled: false, k1: 0, nativeSize: null },
+            ] as const;
+          }
           const state = await resp.json();
           const calib: Calib = {
             homography: (state.homography as number[][] | null) ?? null,
             enabled: state.enabled ?? false,
             k1: state.k1 ?? 0,
+            nativeSize: (state.native_size as [number, number] | null) ?? null,
           };
           return [c.stream_key, calib] as const;
         } catch {
-          return [c.stream_key, { homography: null, enabled: false, k1: 0 }] as const;
+          return [
+            c.stream_key,
+            { homography: null, enabled: false, k1: 0, nativeSize: null },
+          ] as const;
         }
       }),
     );
@@ -105,6 +154,9 @@ export default function CameraGrid({ cams, onFps }: Props) {
               cam={cam}
               onFps={onFps}
               homography={calib ? measurableHomography(calib.enabled, calib.homography) : null}
+              k1={calib?.k1 ?? 0}
+              nativeSize={calib?.nativeSize ?? null}
+              autoMeasurement={autoMeasurements[cam.stream_key]}
               onMeasure={() => setFocusCam(cam)}
             />
           );

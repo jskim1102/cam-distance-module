@@ -38,6 +38,10 @@ dist/
 .dev-logs/
 .analysis/
 
+# detection 런타임 — preset 가중치는 필요 시 자동 다운로드되며 소스가 아니다.
+*.pt
+backend/models/
+
 # --- 대시보드에서 제외 (harness) ---
 /sample/
 /.source/

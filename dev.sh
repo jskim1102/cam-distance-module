@@ -17,6 +17,26 @@ case "${1:-up}" in
       echo "stale $PIDFILE (프로세스 없음) — 정리하고 재기동"; rm -f "$PIDFILE"
     fi
     mkdir -p .dev-logs
+    # 기존 .venv가 남아 있어도 requirements 변경분을 서버 시작 전에 반영한다. 해시가 같으면
+    # pip를 건너뛰어 평소 재시작은 빠르게 유지하고, 새 탐지 의존성 누락 같은 런타임 드리프트를 막는다.
+    BACKEND_REQ_FILE=backend/requirements.txt
+    BACKEND_REQ_STAMP=backend/.venv/.requirements.sha256
+    [ -x backend/.venv/bin/python ] || {
+      echo "backend/.venv가 없습니다 — 먼저 backend venv를 생성하세요" >&2
+      exit 1
+    }
+    BACKEND_REQ_HASH=$(sha256sum "$BACKEND_REQ_FILE" | awk '{print $1}')
+    BACKEND_REQ_INSTALLED=""
+    [ -f "$BACKEND_REQ_STAMP" ] && BACKEND_REQ_INSTALLED=$(tr -d '\r\n' < "$BACKEND_REQ_STAMP")
+    if [ "$BACKEND_REQ_HASH" != "$BACKEND_REQ_INSTALLED" ]; then
+      echo "backend requirements 변경 감지 — .venv 동기화"
+      backend/.venv/bin/python -m pip install -r "$BACKEND_REQ_FILE"
+      # ultralytics가 같은 cv2 경로를 쓰는 GUI용 opencv-python을 의존성으로 끌어온다.
+      # 서버 환경 정본은 headless이므로 Dockerfile과 동일하게 제거 후 고정 버전을 재설치한다.
+      backend/.venv/bin/python -m pip uninstall -y opencv-python
+      backend/.venv/bin/python -m pip install --no-deps --force-reinstall opencv-python-headless==4.13.0.92
+      printf '%s\n' "$BACKEND_REQ_HASH" > "$BACKEND_REQ_STAMP"
+    fi
     # mediamtx: self-host compose 의 자체 인스턴스 — dev.sh 밖에서 mediamtx 서비스만 먼저 기동한다.
     # backend: docker-entrypoint 와 동일하게 alembic upgrade head 후 uvicorn (RULES §9 — alembic 정본).
     #   네이티브 dev 는 자체 mediamtx API 의 호스트 게시포트(127.0.0.1:${MEDIAMTX_API_PORT})로 호출(.env 의 docker DNS 값 override).

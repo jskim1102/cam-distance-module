@@ -28,3 +28,21 @@ def test_git_forces_lf_for_shell_scripts() -> None:
 
     assert "* text=auto eol=lf" in attributes
     assert "*.sh text eol=lf" in attributes
+
+
+def test_native_dev_runner_syncs_backend_requirements_before_launch() -> None:
+    """requirements가 바뀐 기존 venv로 서버를 띄워 런타임 import가 빠지는 회귀를 막는다."""
+    dev_script = (ROOT / "dev.sh").read_text(encoding="utf-8")
+
+    install = 'backend/.venv/bin/python -m pip install -r "$BACKEND_REQ_FILE"'
+    remove_gui_opencv = 'backend/.venv/bin/python -m pip uninstall -y opencv-python'
+    restore_headless = (
+        "backend/.venv/bin/python -m pip install --no-deps --force-reinstall "
+        "opencv-python-headless==4.13.0.92"
+    )
+    launch = 'setsid bash -c "cd backend && source .venv/bin/activate'
+    assert install in dev_script
+    assert dev_script.index(install) < dev_script.index(remove_gui_opencv)
+    assert dev_script.index(remove_gui_opencv) < dev_script.index(restore_headless)
+    assert dev_script.index(restore_headless) < dev_script.index(launch)
+    assert 'sha256sum "$BACKEND_REQ_FILE"' in dev_script

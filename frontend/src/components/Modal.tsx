@@ -4,7 +4,7 @@ interface Props {
   open: boolean;
   onClose: () => void;
   title: string;
-  // 큰 모달(calibration)은 width 를 넓힘 — 기본은 substrate .modal 의 420px.
+  // 큰 모달(calibration)은 width 를 넓힘 — 기본은 substrate .modal 의 760px.
   maxWidth?: number;
   children: ReactNode;
 }

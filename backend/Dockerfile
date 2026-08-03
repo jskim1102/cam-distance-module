@@ -1,19 +1,20 @@
 # syntax=docker/dockerfile:1.7
-# cam-distance backend — FastAPI + numpy/opencv-headless homography fit (프레임 디코딩 없음).
+# cam-distance backend — FastAPI + homography + YOLO 추론 worker + RTSP 캡처.
 # 베이스: python:3.11-slim (Debian slim), Linux 전용.
-# 의존성: pip + requirements.txt. 추론(torch/ultralytics/CUDA)·프레임 캡처·mediamtx 비대상.
+# 의존성: pip + requirements.txt (torch CUDA wheel 포함, GPU 미가용 시 CPU 폴백).
 
 FROM python:3.11-slim
 
 # -----------------------------------------------------------------------------
 # 시스템 패키지
 #   - libglib2.0-0 : opencv-python-headless 런타임 의존 (GLib)
+#   - libgomp1     : torch / ultralytics OpenMP 런타임 의존
 #   - ffmpeg       : ffprobe 로 등록 시점 카메라 코덱 감지 (h264=passthrough/else=libx264 결정)
-#   (torch 의 libgomp1, usbutils 는 비대상 — 추론/USB 웹캠 제거)
 # -----------------------------------------------------------------------------
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         libglib2.0-0 \
+        libgomp1 \
         ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
@@ -26,11 +27,14 @@ WORKDIR /app
 
 # -----------------------------------------------------------------------------
 # 의존성 설치 (레이어 캐시 극대화)
-#   opencv-python-headless 만 설치하므로 X11 의존 opencv-python 덮어쓰기
-#   문제가 없다 → 강제 재설치 정리 블록 불필요.
+#   ultralytics가 끌어오는 opencv-python(X11)을 제거한 뒤 headless를 정본으로 재설치.
 # -----------------------------------------------------------------------------
 COPY requirements.txt ./
-RUN pip install -r requirements.txt
+RUN pip install -r requirements.txt \
+    && pip uninstall -y opencv-python \
+    && pip install --no-deps --force-reinstall opencv-python-headless==4.13.0.92
+
+RUN mkdir -p /root/.cache/ultralytics
 
 # 애플리케이션 소스 + 마이그레이션 (alembic 이 스키마 정본 — RULES §9)
 COPY app ./app

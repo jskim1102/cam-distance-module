@@ -20,7 +20,6 @@ export default function App() {
       : (
         <CamerasPage
           onCalibrate={(cam) => setView({ name: "calibration", cam })}
-          onMeasure={(cam) => setView({ name: "measure", cam })}
         />
       );
 
@@ -44,7 +43,7 @@ export default function App() {
           <span>평면 기준 실세계 거리 측정</span>
         </div>
       </aside>
-      <div className="main">{content}</div>
+      <main className="main">{content}</main>
     </div>
   );
 }

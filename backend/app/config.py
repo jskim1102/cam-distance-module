@@ -32,6 +32,49 @@ MEDIAMTX_BACKEND_PASS: str = os.getenv("MEDIAMTX_BACKEND_PASS", "")
 # 주입된다. 미설정이면 mediamtx 가 컨테이너 내부 주소만 광고 → 외부에서 영상 안 나옴.
 MEDIAMTX_WEBRTC_HOST: str = os.getenv("MEDIAMTX_WEBRTC_HOST", "")
 
+# ── detection (YOLO 추론 — rtsp-detection 모듈과 동일 런타임 계약) ──
+YOLO_DEFAULT_MODEL: str = os.getenv("YOLO_DEFAULT_MODEL") or "yolo26x.pt"
+
+
+def _env_float(name: str, default: float) -> tuple[float, str | None]:
+    """env float 파싱 — 비숫자/빈값이면 import 실패 대신 안전 기본값으로 폴백."""
+    raw = os.getenv(name)
+    if raw is None or raw == "":
+        return default, None
+    try:
+        return float(raw), None
+    except ValueError:
+        return default, f"{name}={raw!r} 가 숫자가 아니라 기본값 {default} 로 폴백"
+
+
+YOLO_CONF_THRESHOLD, _conf_warn = _env_float("YOLO_CONF_THRESHOLD", 0.5)
+YOLO_DEVICE: str = os.getenv("YOLO_DEVICE", "")
+
+# 캡처와 추론 cadence/autotune의 검증된 내부 정책값.
+MIN_INFERENCE_INTERVAL: float = 0.01
+MAX_INFERENCE_INTERVAL: float = 1.0
+INFERENCE_INTERVAL: float = 0.033
+CAPTURE_INTERVAL: float = 0.01
+MAX_INFER_PER_SEC: float = 52.0
+AUTOTUNE_HEADROOM: float = 0.95
+AUTOTUNE_EWMA_ALPHA: float = 0.2
+AUTOTUNE_MIN_SAMPLES: int = 5
+AUTOTUNE_TARGET_FPS_MAX: float = MAX_INFER_PER_SEC
+
+INFERENCE_BATCH_MAX: int = 8
+INFERENCE_BATCH_TIMEOUT_SEC: float = 0.008
+INFERENCE_AGGREGATE_TIMEOUT_SEC: float = 2.0
+INFERENCE_IMGSZ_STAGES: tuple[int, ...] = (320, 416, 512, 640)
+ADAPTIVE_DOWNSHIFT_TICKS: int = 2
+ADAPTIVE_UPSHIFT_TICKS: int = 5
+ADAPTIVE_OVERLOAD_RATIO: float = 0.85
+ADAPTIVE_UNDERLOAD_RATIO: float = 0.65
+
+# preset 가중치 캐시의 cwd 의존성을 없앤다. 명시 env가 있으면 그 값을 우선한다.
+os.environ.setdefault(
+    "CUSTOM_MODELS_DIR", str(Path(__file__).resolve().parent.parent / "models")
+)
+
 LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO").upper()
 
 
@@ -55,3 +98,6 @@ logger = setup_logging()
 
 if _raw_max_ipcams != MAX_IPCAMS:
     logger.warning("MAX_IPCAMS=%d → %d 로 보정됨 (허용 범위: 1~64)", _raw_max_ipcams, MAX_IPCAMS)
+for _warning in (_conf_warn,):
+    if _warning:
+        logger.warning("%s", _warning)

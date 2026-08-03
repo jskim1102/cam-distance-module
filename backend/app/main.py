@@ -7,8 +7,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import CORS_ORIGINS, MAX_IPCAMS, logger
 from app.database import SessionLocal, init_db
+from app.inference_api import inference_router
 from app.ipcam import router as ipcam_router
 from app.mediamtx import sync_streams
+from app.streaming.manager import manager as stream_manager
 
 
 def _bg_sync() -> None:
@@ -26,15 +28,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # alembic 이 스키마 정본이지만, 테스트/로컬 첫 실행 편의를 위해 init_db() 유지.
     init_db()
 
+    # YOLO 워커는 별도 프로세스, 캡처/dispatch는 관리 스레드에서 동작한다.
+    stream_manager.startup()
+
     # DB 카메라 재등록은 probe 지연과 무관하게 서버가 즉시 요청을 받도록 분리한다.
     threading.Thread(target=_bg_sync, daemon=True).start()
 
-    logger.info("RTSP Streaming API 서버 시작")
+    logger.info("RTSP Distance Detection API 서버 시작")
     yield
-    logger.info("서버 종료")
+    logger.info("서버 종료 중 — 캡처/추론 리소스 정리")
+    stream_manager.shutdown()
+    logger.info("서버 종료 완료")
 
 
-app = FastAPI(title="RTSP Streaming API", lifespan=lifespan)
+app = FastAPI(title="RTSP Distance Detection API", lifespan=lifespan)
 
 # CORS
 cors_origins = ["*"] if CORS_ORIGINS == "*" else [o.strip() for o in CORS_ORIGINS.split(",")]
@@ -46,6 +53,7 @@ app.add_middleware(
 )
 
 app.include_router(ipcam_router)
+app.include_router(inference_router)
 
 
 @app.get("/api/health")

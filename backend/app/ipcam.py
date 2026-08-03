@@ -1,17 +1,20 @@
+import asyncio
 import logging
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, field_serializer
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.config import MAX_IPCAMS
+from app.config import CAPTURE_INTERVAL, MAX_IPCAMS
 from app.database import get_db
 from app.masking import _MASK, _restore_masked_password, _split_credentials, mask_rtsp_credentials
 from app.mediamtx import ensure_stream, register_stream, remove_stream, update_stream
 from app.mediamtx import _validate_rtsp_url
 from app.models import IpCam
+from app.streaming.manager import detections_to_json
+from app.streaming.manager import manager as stream_manager
 from app.calibration import (
     CalibrationState,
     CalibrationUpdate,
@@ -22,6 +25,11 @@ from app.calibration import (
 logger = logging.getLogger("cam-distance.ipcam")
 
 router = APIRouter(prefix="/api/ipcams", tags=["ipcam"])
+
+
+def _source_id(stream_key: str) -> str:
+    """카메라 stream_key를 추론 캡처 식별자로 변환한다."""
+    return f"ipcam-{stream_key}"
 
 
 def _check_rtsp_url(rtsp_url: str) -> None:
@@ -212,6 +220,11 @@ def update_ipcam(cam_id: int, body: IpCamUpdate, db: Session = Depends(get_db)) 
 
     db.commit()
     db.refresh(cam)
+
+    # 이미 자동 측정 중이면 검출 캡처도 새 RTSP URL로 원자 교체한다.
+    if new_url != old_url:
+        stream_manager.replace_source(_source_id(cam.stream_key), new_url)
+
     logger.info("IP CAM 수정: id=%d name=%s", cam.id, cam.name)
     return cam
 
@@ -242,12 +255,18 @@ def delete_ipcam(cam_id: int, db: Session = Depends(get_db)) -> None:
             detail="mediamtx 스트림 제거에 실패했습니다 — 카메라가 삭제되지 않았습니다",
         )
 
+    # 삭제가 확정된 뒤 ref-count와 무관하게 YOLO 캡처를 완전히 중단한다.
+    stream_manager.remove_capture(_source_id(stream_key))
+
     db.delete(cam)
     db.commit()
 
     # row 가 사라진 뒤(=ensure_stream 이 더는 재등록 안 함) sweep 으로 race resurrection 제거.
     if not _remove_or_fail(stream_key):
         logger.warning("삭제 sweep 실패 — orphan path 가능성: stream_key=%s", stream_key)
+
+    # 삭제 commit 사이의 WS 경쟁으로 재생성된 캡처도 대칭 sweep으로 제거한다.
+    stream_manager.remove_capture(_source_id(stream_key))
 
     logger.info("IP CAM 삭제: id=%d stream_key=%s", cam_id, stream_key)
 
@@ -322,3 +341,114 @@ def update_ipcam_calibration(
         stream_key, body.enabled, result.k1, result.mean_reprojection_error,
     )
     return state
+
+
+# ─── 카메라별 YOLO 추론 + detection 좌표 WebSocket ───
+
+
+class PerSourceInferenceState(BaseModel):
+    enabled: bool
+    conf_threshold: float | None = None
+    models: list[str] | None = None
+
+
+class PerSourceInferenceUpdate(BaseModel):
+    enabled: bool | None = None
+    conf_threshold: float | None = None
+    models: list[str] | None = None
+
+
+def _build_inference_state(source_id: str) -> dict:
+    return {
+        "enabled": stream_manager.is_source_inference_enabled(source_id),
+        "conf_threshold": stream_manager.get_source_conf_threshold(source_id),
+        "models": stream_manager.get_source_models(source_id),
+    }
+
+
+@router.get("/{stream_key}/inference", response_model=PerSourceInferenceState)
+def get_ipcam_inference(stream_key: str, db: Session = Depends(get_db)) -> dict:
+    """이 카메라의 추론 ON/OFF, confidence, 모델 설정을 조회한다."""
+    cam = db.query(IpCam).filter(IpCam.stream_key == stream_key).first()
+    if not cam:
+        raise HTTPException(status_code=404, detail="IP CAM을 찾을 수 없습니다")
+    return _build_inference_state(_source_id(stream_key))
+
+
+@router.put("/{stream_key}/inference", response_model=PerSourceInferenceState)
+def set_ipcam_inference(
+    stream_key: str,
+    body: PerSourceInferenceUpdate,
+    db: Session = Depends(get_db),
+) -> dict:
+    """카메라별 추론 설정을 부분 갱신한다."""
+    cam = db.query(IpCam).filter(IpCam.stream_key == stream_key).first()
+    if not cam:
+        raise HTTPException(status_code=404, detail="IP CAM을 찾을 수 없습니다")
+
+    source_id = _source_id(stream_key)
+    if body.enabled is not None:
+        stream_manager.set_source_inference_enabled(source_id, body.enabled)
+    if body.conf_threshold is not None:
+        stream_manager.set_source_conf_threshold(source_id, body.conf_threshold)
+    if body.models is not None:
+        stream_manager.set_source_models(source_id, body.models)
+    return _build_inference_state(source_id)
+
+
+@router.websocket("/{stream_key}/ws")
+async def ipcam_ws(websocket: WebSocket, stream_key: str) -> None:
+    """WHEP 영상과 별도로 YOLO detection 좌표 JSON만 전송한다."""
+    from app.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        cam = db.query(IpCam).filter(IpCam.stream_key == stream_key).first()
+    finally:
+        db.close()
+
+    if not cam:
+        await websocket.close(code=1008, reason="등록되지 않은 stream_key")
+        return
+
+    await websocket.accept()
+    source_id = _source_id(stream_key)
+
+    # accept 대기 중 삭제/수정될 수 있으므로 최신 row와 URL을 다시 읽는다.
+    db = SessionLocal()
+    try:
+        cam = db.query(IpCam).filter(IpCam.stream_key == stream_key).first()
+    finally:
+        db.close()
+    if not cam:
+        await websocket.close(code=1008, reason="등록되지 않은 stream_key")
+        return
+
+    logger.info(
+        "detection WS 연결: %s (rtsp=%s)",
+        source_id,
+        mask_rtsp_credentials(cam.rtsp_url),
+    )
+
+    if not stream_manager.start_capture(source_id, cam.rtsp_url):
+        logger.warning("Capture %s 시작 실패 — RTSP 연결 안 됨", source_id)
+        await websocket.close(code=1011, reason="RTSP 연결 실패")
+        return
+
+    try:
+        previous_timestamp = 0.0
+        while True:
+            result = stream_manager.get_source_latest_detections(source_id)
+            if result and result.timestamp != previous_timestamp:
+                await websocket.send_text(detections_to_json(result))
+                previous_timestamp = result.timestamp
+            try:
+                await asyncio.wait_for(websocket.receive_text(), timeout=CAPTURE_INTERVAL)
+            except asyncio.TimeoutError:
+                continue
+    except WebSocketDisconnect:
+        logger.info("detection WS 해제: %s", source_id)
+    except Exception:
+        logger.exception("detection WS %s 송출 중 예외", source_id)
+    finally:
+        stream_manager.stop_capture(source_id)

@@ -1,7 +1,13 @@
 import { useState, useEffect, useCallback } from "react";
 import { apiBase } from "../hooks/useApi";
+import type { AutoMeasurement, SelectedYoloClass, YoloClass } from "../types/detection";
+import {
+  minimumClassConfidence,
+  normalizeClassConfidence,
+} from "../utils/detectionPairs";
 import CameraFormModal from "../components/CameraFormModal";
 import CameraGrid from "../components/CameraGrid";
+import MeasurementClassModal from "../components/MeasurementClassModal";
 
 export interface Cam {
   id: number;
@@ -17,15 +23,40 @@ interface Stat {
 }
 
 const MAX_IPCAMS_FALLBACK = 16; // spec F4 — /api/config 로딩 전 기본값. 실제 cap 은 백엔드 env.
+const MEASURE_MODEL = "yolo26x.pt";
+const MEASURE_STORAGE_KEY = "cam-distance:auto-measure:v1";
+const EMPTY_CLASSES: SelectedYoloClass[] = [];
+
+function loadStoredMeasurements(): Record<string, AutoMeasurement> {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(MEASURE_STORAGE_KEY) ?? "{}") as Record<
+      string,
+      Partial<AutoMeasurement>
+    >;
+    return Object.fromEntries(
+      Object.entries(parsed).flatMap(([streamKey, value]) => {
+        const classes = Array.isArray(value.classes)
+          ? value.classes.flatMap((item) =>
+              typeof item?.id === "number" && typeof item?.name === "string"
+                ? [{ id: item.id, name: item.name, conf: normalizeClassConfidence(item.conf) }]
+                : [],
+            ).slice(0, 2)
+          : [];
+        if (classes.length < 1) return [];
+        return [[streamKey, { enabled: value.enabled === true, classes }]];
+      }),
+    );
+  } catch {
+    return {};
+  }
+}
 
 interface Props {
   // calibration 버튼 → App 이 풀페이지 CalibrationPage 로 전환.
   onCalibrate: (cam: Cam) => void;
-  // 측정 버튼 → App 이 단일 카메라 측정 뷰(MeasurePage)로 전환 (F5).
-  onMeasure: (cam: Cam) => void;
 }
 
-export default function CamerasPage({ onCalibrate, onMeasure }: Props) {
+export default function CamerasPage({ onCalibrate }: Props) {
   const [cams, setCams] = useState<Cam[]>([]);
   const [stats, setStats] = useState<Record<string, Stat>>({});
   // 실측 FPS — 그리드의 WhepPlayer 가 WebRTC getStats 로 올려주는 카메라별 디코딩 프레임레이트.
@@ -35,6 +66,14 @@ export default function CamerasPage({ onCalibrate, onMeasure }: Props) {
   const [formOpen, setFormOpen] = useState(false);
   const [editCam, setEditCam] = useState<Cam | null>(null);
   const [error, setError] = useState("");
+  const [autoMeasurements, setAutoMeasurements] = useState<Record<string, AutoMeasurement>>(
+    loadStoredMeasurements,
+  );
+  const [measureTarget, setMeasureTarget] = useState<Cam | null>(null);
+  const [measureCanEnable, setMeasureCanEnable] = useState(false);
+  const [yoloClasses, setYoloClasses] = useState<YoloClass[]>([]);
+  const [measureBusyKey, setMeasureBusyKey] = useState<string | null>(null);
+  const [measureSaving, setMeasureSaving] = useState(false);
 
   const fetchCams = useCallback(async () => {
     const resp = await fetch(`${apiBase()}/api/ipcams`);
@@ -45,6 +84,10 @@ export default function CamerasPage({ onCalibrate, onMeasure }: Props) {
   useEffect(() => {
     fetchCams();
   }, [fetchCams]);
+
+  useEffect(() => {
+    window.localStorage.setItem(MEASURE_STORAGE_KEY, JSON.stringify(autoMeasurements));
+  }, [autoMeasurements]);
 
   // 등록 cap 을 백엔드에서 1회 로딩 (없으면 fallback 유지).
   useEffect(() => {
@@ -121,7 +164,69 @@ export default function CamerasPage({ onCalibrate, onMeasure }: Props) {
       setError("카메라 삭제에 실패했습니다.");
       return;
     }
+    setAutoMeasurements((current) => {
+      const next = { ...current };
+      delete next[cam.stream_key];
+      return next;
+    });
     await fetchCams();
+  }
+
+  async function openAutoMeasurementSettings(cam: Cam) {
+    setError("");
+    setMeasureBusyKey(cam.stream_key);
+    try {
+      const calibrationResp = await fetch(`${apiBase()}/api/ipcams/${cam.stream_key}/calibration`);
+      if (!calibrationResp.ok) throw new Error("기준점 정보를 불러오지 못했습니다.");
+      const calibration = await calibrationResp.json();
+      setMeasureCanEnable(Boolean(calibration.enabled && calibration.homography));
+
+      let availableClasses = yoloClasses;
+      if (availableClasses.length === 0) {
+        const classesResp = await fetch(
+          `${apiBase()}/api/inference/models/${encodeURIComponent(MEASURE_MODEL)}/classes`,
+        );
+        if (!classesResp.ok) throw new Error("YOLO 클래스 목록을 불러오지 못했습니다.");
+        availableClasses = (await classesResp.json()) as YoloClass[];
+        setYoloClasses(availableClasses);
+      }
+      setMeasureTarget(cam);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "자동 측정 설정에 실패했습니다.");
+    } finally {
+      setMeasureBusyKey(null);
+    }
+  }
+
+  async function applyAutoMeasurement(enabled: boolean, classes: SelectedYoloClass[]) {
+    if (!measureTarget) return;
+    setMeasureSaving(true);
+    setError("");
+    try {
+      const resp = await fetch(`${apiBase()}/api/ipcams/${measureTarget.stream_key}/inference`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(
+          enabled
+            ? {
+                enabled: true,
+                models: [MEASURE_MODEL],
+                conf_threshold: minimumClassConfidence(classes),
+              }
+            : { enabled: false },
+        ),
+      });
+      if (!resp.ok) throw new Error("자동 측정 설정을 저장하지 못했습니다.");
+      setAutoMeasurements((current) => ({
+        ...current,
+        [measureTarget.stream_key]: { enabled, classes },
+      }));
+      setMeasureTarget(null);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "자동 측정 설정을 저장하지 못했습니다.");
+    } finally {
+      setMeasureSaving(false);
+    }
   }
 
   return (
@@ -191,7 +296,7 @@ export default function CamerasPage({ onCalibrate, onMeasure }: Props) {
                   <th>RTSP URL</th>
                   <th style={{ width: 110 }}>상태</th>
                   <th style={{ width: 80 }}>FPS</th>
-                  <th style={{ width: 250, textAlign: "right" }}>관리</th>
+                  <th style={{ width: 330, textAlign: "right" }}>관리</th>
                 </tr>
               </thead>
               <tbody>
@@ -217,8 +322,15 @@ export default function CamerasPage({ onCalibrate, onMeasure }: Props) {
                       </td>
                       <td className="mono">{active && fps[cam.stream_key] != null ? fps[cam.stream_key].toFixed(1) : "—"}</td>
                       <td className="table-actions">
-                        <button className="btn sm" onClick={() => onMeasure(cam)}>측정</button>
                         <button className="btn sm" onClick={() => onCalibrate(cam)}>기준점</button>
+                        <button
+                          className="btn sm measure-toggle"
+                          disabled={measureBusyKey === cam.stream_key}
+                          title="자동 거리측정 설정"
+                          onClick={() => openAutoMeasurementSettings(cam)}
+                        >
+                          측정
+                        </button>
                         <button
                           className="btn sm"
                           onClick={() => {
@@ -226,7 +338,7 @@ export default function CamerasPage({ onCalibrate, onMeasure }: Props) {
                             setFormOpen(true);
                           }}
                         >
-                          수정
+                          RTSP 수정
                         </button>
                         <button className="btn sm danger" onClick={() => deleteCam(cam)}>
                           삭제
@@ -249,7 +361,7 @@ export default function CamerasPage({ onCalibrate, onMeasure }: Props) {
             <span className="badge none">{cams.length} CH</span>
           </div>
           <div className="live-grid-body">
-            <CameraGrid cams={cams} onFps={handleFps} />
+            <CameraGrid cams={cams} onFps={handleFps} autoMeasurements={autoMeasurements} />
           </div>
         </section>
       </div>
@@ -259,6 +371,23 @@ export default function CamerasPage({ onCalibrate, onMeasure }: Props) {
         editCam={editCam}
         onClose={() => setFormOpen(false)}
         onSave={handleSave}
+      />
+      <MeasurementClassModal
+        open={measureTarget != null}
+        cameraName={measureTarget?.name ?? ""}
+        classes={yoloClasses}
+        initialEnabled={
+          measureTarget ? autoMeasurements[measureTarget.stream_key]?.enabled ?? false : false
+        }
+        initialSelection={
+          measureTarget
+            ? autoMeasurements[measureTarget.stream_key]?.classes ?? EMPTY_CLASSES
+            : EMPTY_CLASSES
+        }
+        canEnable={measureCanEnable}
+        saving={measureSaving}
+        onClose={() => setMeasureTarget(null)}
+        onConfirm={applyAutoMeasurement}
       />
     </>
   );

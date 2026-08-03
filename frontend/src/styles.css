@@ -254,6 +254,7 @@ input[type="number"]::-webkit-outer-spin-button { margin: 0; appearance: none; }
 .status-off { color: var(--muted); }
 .table-actions { text-align: right; white-space: nowrap; }
 .table-actions .btn + .btn { margin-left: 4px; }
+.measure-toggle { min-width: 72px; color: var(--muted); }
 .empty-cell { padding: 28px 12px !important; color: var(--muted); text-align: center; }
 
 .live-grid-panel { overflow: hidden; }
@@ -273,6 +274,15 @@ input[type="number"]::-webkit-outer-spin-button { margin: 0; appearance: none; }
 }
 .grid-cell:hover { border-color: #3a4a5a; }
 .grid-cell-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
+.detection-distance-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+}
 .grid-cell-nosignal { position: relative; color: var(--muted); font-size: 12px; }
 .grid-measure-toggle {
   position: absolute;
@@ -329,6 +339,8 @@ input[type="number"]::-webkit-outer-spin-button { margin: 0; appearance: none; }
   background: rgba(0, 0, 0, .66);
   backdrop-filter: blur(2px);
 }
+/* 큰 모달이 뷰포트보다 길어지면 .modal 이 높이를 제한하고 .modal-body 만 스크롤 —
+   내용이 맞으면 시각 변화 없음. */
 .modal {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
@@ -370,6 +382,91 @@ input[type="number"]::-webkit-outer-spin-button { margin: 0; appearance: none; }
   background: var(--panel-2);
 }
 
+/* YOLO 자동 측정 클래스 선택 */
+.measure-state-control {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, .12);
+}
+.measure-state-control > div:first-child { display: flex; align-items: center; gap: 8px; }
+.measure-state-label { font-size: 11px; font-weight: 700; }
+.measure-state-label.on { color: #71d589; }
+.measure-state-label.off { color: var(--muted); }
+.measure-state-buttons { display: flex; gap: 5px; }
+.measure-state-buttons .btn.selected { border-color: #64748b; background: rgba(100, 116, 139, .18); color: var(--text); }
+.measure-state-buttons .btn.selected.on { border-color: rgba(55, 178, 77, .8); background: rgba(55, 178, 77, .12); color: #71d589; }
+.measure-state-warning { margin: 0 0 10px; color: #fbbf24; font-size: 12px; }
+.measure-class-help { margin: 0 0 12px; color: var(--muted); font-size: 12px; }
+.measure-class-summary {
+  display: flex;
+  align-items: center;
+  min-height: 30px;
+  gap: 6px;
+  margin-bottom: 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.measure-class-chip {
+  padding: 2px 8px;
+  border: 1px solid rgba(59, 130, 246, .65);
+  border-radius: 999px;
+  background: rgba(59, 130, 246, .12);
+  color: #93c5fd;
+}
+.measure-confidence-list {
+  display: grid;
+  gap: 7px;
+  margin: 0 0 12px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, .12);
+}
+.measure-confidence-row {
+  display: grid;
+  grid-template-columns: minmax(90px, 1fr) minmax(160px, 2fr) 42px;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+}
+.measure-confidence-name { overflow: hidden; color: var(--text); text-overflow: ellipsis; white-space: nowrap; }
+.measure-confidence-row input { width: 100%; margin: 0; }
+.measure-confidence-row output { color: #93c5fd; font-variant-numeric: tabular-nums; text-align: right; }
+.measure-class-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  max-height: min(46vh, 380px);
+  padding: 2px;
+  overflow: auto;
+}
+.measure-class-option {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.measure-class-option:hover { border-color: #3a4a5a; color: var(--text); }
+.measure-class-option.selected {
+  border-color: rgba(59, 130, 246, .75);
+  background: rgba(59, 130, 246, .1);
+  color: var(--text);
+}
+.measure-class-option input { flex: none; width: auto; margin: 0; }
+.measure-class-option span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.measure-class-empty { grid-column: 1 / -1; padding: 24px; color: var(--muted); text-align: center; }
+
 /* Tabs and measurement */
 .tabs { display: flex; gap: 4px; margin-bottom: 12px; border-bottom: 1px solid var(--line); }
 .tab {
@@ -384,6 +481,7 @@ input[type="number"]::-webkit-outer-spin-button { margin: 0; appearance: none; }
 }
 .tab.active { border-color: var(--line); border-bottom-color: var(--panel); background: var(--panel); color: var(--text); font-weight: 600; }
 .measure-actions { display: flex; justify-content: flex-end; margin-bottom: 12px; }
+/* 측정 뷰 — <video> + MeasureOverlay 무대. natural 종횡비, contain. */
 .measure-stage {
   position: relative;
   width: min(100%, calc(55vh * 16 / 9));
@@ -396,6 +494,8 @@ input[type="number"]::-webkit-outer-spin-button { margin: 0; appearance: none; }
 /* calibration 탭일 때 video 무대 숨김 — 단 display:none 금지(디코딩 throttle→검은 grab).
    화면 밖으로 보내되 렌더 트리에 남겨 디코딩 유지 → 실 프레임 grab 보장. */
 .measure-stage-offscreen { position: absolute; top: 0; left: -99999px; width: 1px; height: 1px; margin: 0; pointer-events: none; }
+/* 측정 뷰 안의 WHEP <video> 는 무대 전체를 채우되 letterbox(contain) 유지 —
+   클릭 좌표 매핑(videoCoords)이 letterbox 를 보정하므로 그리드와 동일 규칙. */
 .measure-stage .grid-cell-video { background: #000; }
 /* canvas-over-video 측정 오버레이 — 위치·크기는 JS 가 video 의 object-fit:contain rect 로
    inline 지정(비-16:9 letterbox/pillarbox 정렬, finding #3). 여기선 기준점만.
@@ -406,6 +506,8 @@ input[type="number"]::-webkit-outer-spin-button { margin: 0; appearance: none; }
 .calibration-content { display: flex; min-height: 0; }
 .calib-page { width: 100%; min-width: 0; }
 .calib-toolbar { margin-bottom: 10px; }
+/* 라이브 프리뷰 — WHEP <video> 를 항상 렌더(디코딩 유지 → 실 프레임 grab). 작게 보여
+   "지금 잡히는 화면" 확인용. 큰 picking 은 아래 스냅샷(CalibrationModal). */
 .calib-live-preview {
   position: relative;
   width: 240px;
@@ -419,10 +521,16 @@ input[type="number"]::-webkit-outer-spin-button { margin: 0; appearance: none; }
 }
 .calib-steps { display: flex; gap: 12px; margin-bottom: 10px; color: var(--muted); font-size: 12px; }
 .calib-step.done { color: var(--accent); }
+/* 현재 단계 — done 의 var(--accent)보다 var(--text) + 700 + 밑줄로 강조.
+   RESULT 도달 시 step4 "결과"가 강조되지 않아 "안 끝났다"고 오인하던 시각 버그 재발 방지. */
 .calib-step.current { color: var(--text); font-weight: 700; text-decoration: underline; }
+/* 풀페이지 picking 을 모달보다 넓게 — 우측 거리 입력 열은 360px 로 고정하고
+   minmax(0, 1fr) 인 남은 폭을 스냅샷에 할당한다. */
 .calib-main { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 12px; align-items: stretch; }
 .calib-snapshot { min-width: 0; }
 .calib-dist { min-width: 0; min-height: 0; max-height: min(58vh, 620px); overflow: auto; scrollbar-gutter: stable; }
+/* measure <video> 무대와 동일하게 고정 종횡비 + contain — 그래야 클릭 매핑/마커가
+   measure 측과 비트-동일한 letterbox 보정(videoClientToNatural)을 공유한다. */
 .calib-img-wrap { position: relative; aspect-ratio: 16 / 9; overflow: hidden; border-radius: 8px; background: #000; }
 .calib-img { display: block; width: 100%; height: 100%; object-fit: contain; }
 /* 마커 layer — img 의 object-fit:contain rect(JS inline left/top/width/height).
@@ -506,6 +614,8 @@ input[type="number"]::-webkit-outer-spin-button { margin: 0; appearance: none; }
   .modal { max-width: none !important; max-height: 100dvh; border-radius: 0; }
   .modal-foot { border-radius: 0; }
   .modal-foot .btn { flex: 1; text-align: center; }
+  .measure-confidence-row { grid-template-columns: 80px minmax(100px, 1fr) 36px; gap: 7px; }
+  .measure-class-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .calib-live-preview { width: 100%; }
 }
 

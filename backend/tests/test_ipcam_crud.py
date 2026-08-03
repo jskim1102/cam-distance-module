@@ -114,6 +114,34 @@ def test_delete_missing_returns_404(client):
     assert resp.status_code == 404
 
 
+def test_per_camera_inference_can_toggle_and_select_measurement_model(client):
+    cam = client.post(
+        "/api/ipcams",
+        json={"name": "measure", "rtsp_url": "rtsp://x/measure"},
+    ).json()
+    key = cam["stream_key"]
+
+    response = client.put(
+        f"/api/ipcams/{key}/inference",
+        json={"enabled": True, "models": ["yolo26n.pt"]},
+    )
+    assert response.status_code == 200
+    assert response.json()["enabled"] is True
+    assert response.json()["models"] == ["yolo26n.pt"]
+
+    response = client.put(f"/api/ipcams/{key}/inference", json={"enabled": False})
+    assert response.status_code == 200
+    assert response.json()["enabled"] is False
+
+
+def test_per_camera_inference_rejects_unknown_stream_key(client):
+    response = client.put(
+        "/api/ipcams/not-registered/inference",
+        json={"enabled": True, "models": ["yolo26n.pt"]},
+    )
+    assert response.status_code == 404
+
+
 # ─── net-new: mediamtx 사이드이펙트 배선 (test-first) ───
 
 
