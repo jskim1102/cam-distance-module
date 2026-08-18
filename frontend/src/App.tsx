@@ -23,27 +23,5 @@ export default function App() {
         />
       );
 
-  return (
-    <div className="app">
-      <aside className="sidebar">
-        <div className="logo"><span aria-hidden="true">◈</span> cam-distance</div>
-        <nav className="sidebar-nav" aria-label="현재 화면">
-          <div className={view.name === "cameras" ? "sidebar-link active" : "sidebar-link"}>
-            실시간 모니터
-          </div>
-          <div className={view.name === "calibration" ? "sidebar-link active" : "sidebar-link"}>
-            기준점 설정
-          </div>
-          <div className={view.name === "measure" ? "sidebar-link active" : "sidebar-link"}>
-            거리 측정
-          </div>
-        </nav>
-        <div className="sidebar-foot">
-          <span className="sidebar-foot-label">MEASUREMENT MODULE</span>
-          <span>평면 기준 실세계 거리 측정</span>
-        </div>
-      </aside>
-      <main className="main">{content}</main>
-    </div>
-  );
+  return <main className="main">{content}</main>;
 }

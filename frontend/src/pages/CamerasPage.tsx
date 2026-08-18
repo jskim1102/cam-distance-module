@@ -1,9 +1,17 @@
 import { useState, useEffect, useCallback } from "react";
 import { apiBase } from "../hooks/useApi";
-import type { AutoMeasurement, SelectedYoloClass, YoloClass } from "../types/detection";
+import type {
+  AutoMeasurement,
+  SelectedYoloClass,
+  WeightsStatus,
+  YoloClass,
+} from "../types/detection";
 import {
   minimumClassConfidence,
+  modelClassKey,
   normalizeClassConfidence,
+  PERSON_CLASS_ID,
+  PERSON_MODEL,
 } from "../utils/detectionPairs";
 import CameraFormModal from "../components/CameraFormModal";
 import CameraGrid from "../components/CameraGrid";
@@ -23,7 +31,6 @@ interface Stat {
 }
 
 const MAX_IPCAMS_FALLBACK = 16; // spec F4 — /api/config 로딩 전 기본값. 실제 cap 은 백엔드 env.
-const MEASURE_MODEL = "yolo26x.pt";
 const MEASURE_STORAGE_KEY = "cam-distance:auto-measure:v1";
 const EMPTY_CLASSES: SelectedYoloClass[] = [];
 
@@ -37,12 +44,27 @@ function loadStoredMeasurements(): Record<string, AutoMeasurement> {
       Object.entries(parsed).flatMap(([streamKey, value]) => {
         const classes = Array.isArray(value.classes)
           ? value.classes.flatMap((item) =>
-              typeof item?.id === "number" && typeof item?.name === "string"
-                ? [{ id: item.id, name: item.name, conf: normalizeClassConfidence(item.conf) }]
+              typeof item?.id === "number"
+                && typeof item?.name === "string"
+                && typeof item?.model === "string"
+                ? [{
+                    id: item.id,
+                    name: item.name,
+                    model: item.model,
+                    conf: normalizeClassConfidence(item.conf),
+                  }]
                 : [],
-            ).slice(0, 2)
+            ).filter((item, index, all) => (
+              all.findIndex((candidate) => (
+                modelClassKey(candidate.model, candidate.id) === modelClassKey(item.model, item.id)
+              )) === index
+            )).slice(0, 2)
           : [];
-        if (classes.length < 1) return [];
+        const hasPerson = classes.some(
+          (item) => item.model === PERSON_MODEL && item.id === PERSON_CLASS_ID,
+        );
+        const hasCustom = classes.some((item) => item.model !== PERSON_MODEL);
+        if (classes.length !== 2 || !hasPerson || !hasCustom) return [];
         return [[streamKey, { enabled: value.enabled === true, classes }]];
       }),
     );
@@ -72,6 +94,10 @@ export default function CamerasPage({ onCalibrate }: Props) {
   const [measureTarget, setMeasureTarget] = useState<Cam | null>(null);
   const [measureCanEnable, setMeasureCanEnable] = useState(false);
   const [yoloClasses, setYoloClasses] = useState<YoloClass[]>([]);
+  const [weights, setWeights] = useState<WeightsStatus | null>(null);
+  const [weightsBusy, setWeightsBusy] = useState(false);
+  const [weightsError, setWeightsError] = useState("");
+  const [selectionResetToken, setSelectionResetToken] = useState(0);
   const [measureBusyKey, setMeasureBusyKey] = useState<string | null>(null);
   const [measureSaving, setMeasureSaving] = useState(false);
 
@@ -174,22 +200,24 @@ export default function CamerasPage({ onCalibrate }: Props) {
 
   async function openAutoMeasurementSettings(cam: Cam) {
     setError("");
+    setWeightsError("");
     setMeasureBusyKey(cam.stream_key);
     try {
-      const calibrationResp = await fetch(`${apiBase()}/api/ipcams/${cam.stream_key}/calibration`);
+      const [calibrationResp, weightsResp, classesResp] = await Promise.all([
+        fetch(`${apiBase()}/api/ipcams/${cam.stream_key}/calibration`),
+        fetch(`${apiBase()}/api/inference/weights`),
+        fetch(`${apiBase()}/api/inference/classes`),
+      ]);
       if (!calibrationResp.ok) throw new Error("기준점 정보를 불러오지 못했습니다.");
+      if (!weightsResp.ok) throw new Error("활성 가중치 정보를 불러오지 못했습니다.");
       const calibration = await calibrationResp.json();
-      setMeasureCanEnable(Boolean(calibration.enabled && calibration.homography));
-
-      let availableClasses = yoloClasses;
-      if (availableClasses.length === 0) {
-        const classesResp = await fetch(
-          `${apiBase()}/api/inference/models/${encodeURIComponent(MEASURE_MODEL)}/classes`,
-        );
-        if (!classesResp.ok) throw new Error("YOLO 클래스 목록을 불러오지 못했습니다.");
-        availableClasses = (await classesResp.json()) as YoloClass[];
-        setYoloClasses(availableClasses);
+      const nextWeights = (await weightsResp.json()) as WeightsStatus;
+      if (!classesResp.ok && !(classesResp.status === 404 && nextWeights.custom == null)) {
+        throw new Error("Custom YOLO 클래스 목록을 불러오지 못했습니다.");
       }
+      setMeasureCanEnable(Boolean(calibration.enabled && calibration.homography));
+      setWeights(nextWeights);
+      setYoloClasses(classesResp.ok ? (await classesResp.json()) as YoloClass[] : []);
       setMeasureTarget(cam);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "자동 측정 설정에 실패했습니다.");
@@ -198,11 +226,76 @@ export default function CamerasPage({ onCalibrate }: Props) {
     }
   }
 
+  function resetAllMeasurementSelections() {
+    window.localStorage.removeItem(MEASURE_STORAGE_KEY);
+    setAutoMeasurements({});
+    setSelectionResetToken((current) => current + 1);
+  }
+
+  async function readResponseError(response: Response, fallback: string): Promise<string> {
+    const body = await response.json().catch(() => null) as { detail?: unknown } | null;
+    return typeof body?.detail === "string" ? body.detail : fallback;
+  }
+
+  async function loadActiveClasses(): Promise<YoloClass[]> {
+    const response = await fetch(`${apiBase()}/api/inference/classes`);
+    if (response.status === 404) return [];
+    if (!response.ok) throw new Error("Custom 가중치의 클래스 목록을 불러오지 못했습니다.");
+    return response.json() as Promise<YoloClass[]>;
+  }
+
+  async function uploadWeights(file: File) {
+    setWeightsBusy(true);
+    setWeightsError("");
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const response = await fetch(`${apiBase()}/api/inference/weights`, {
+        method: "POST",
+        body: form,
+      });
+      if (!response.ok) {
+        throw new Error(await readResponseError(response, "가중치 업로드에 실패했습니다."));
+      }
+      const nextWeights = (await response.json()) as WeightsStatus;
+      setWeights(nextWeights);
+      resetAllMeasurementSelections();
+      setYoloClasses([]);
+      setYoloClasses(await loadActiveClasses());
+    } catch (reason) {
+      setWeightsError(reason instanceof Error ? reason.message : "가중치 업로드에 실패했습니다.");
+    } finally {
+      setWeightsBusy(false);
+    }
+  }
+
+  async function resetWeights() {
+    setWeightsBusy(true);
+    setWeightsError("");
+    try {
+      const response = await fetch(`${apiBase()}/api/inference/weights`, { method: "DELETE" });
+      if (!response.ok) {
+        throw new Error(await readResponseError(response, "기본 가중치 복귀에 실패했습니다."));
+      }
+      const nextWeights = (await response.json()) as WeightsStatus;
+      setWeights(nextWeights);
+      resetAllMeasurementSelections();
+      setYoloClasses([]);
+      setYoloClasses(await loadActiveClasses());
+    } catch (reason) {
+      setWeightsError(reason instanceof Error ? reason.message : "기본 가중치 복귀에 실패했습니다.");
+    } finally {
+      setWeightsBusy(false);
+    }
+  }
+
   async function applyAutoMeasurement(enabled: boolean, classes: SelectedYoloClass[]) {
     if (!measureTarget) return;
     setMeasureSaving(true);
     setError("");
     try {
+      if (!weights) throw new Error("활성 가중치 정보를 불러오지 못했습니다.");
+      if (enabled && !weights.custom) throw new Error("Custom 가중치를 먼저 업로드하세요.");
       const resp = await fetch(`${apiBase()}/api/ipcams/${measureTarget.stream_key}/inference`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -210,7 +303,7 @@ export default function CamerasPage({ onCalibrate }: Props) {
           enabled
             ? {
                 enabled: true,
-                models: [MEASURE_MODEL],
+                models: [weights.preset_name, weights.custom!.name],
                 conf_threshold: minimumClassConfidence(classes),
               }
             : { enabled: false },
@@ -234,7 +327,6 @@ export default function CamerasPage({ onCalibrate }: Props) {
       <header className="topbar">
         <div className="topbar-title">
           <h1>실시간 모니터</h1>
-          <span className="hint">카메라 연결 상태와 거리 측정 화면을 관리합니다.</span>
         </div>
         <div className="topbar-right">
           <div className="sysbar" role="status">
@@ -286,7 +378,6 @@ export default function CamerasPage({ onCalibrate }: Props) {
         <section className="panel table-panel camera-table-panel">
           <div className="panel-head row-between">
             <strong>카메라 목록</strong>
-            <span className="hint">상태는 1초마다 자동 갱신</span>
           </div>
           <div className="table-wrap">
             <table className="data-table">
@@ -322,14 +413,14 @@ export default function CamerasPage({ onCalibrate }: Props) {
                       </td>
                       <td className="mono">{active && fps[cam.stream_key] != null ? fps[cam.stream_key].toFixed(1) : "—"}</td>
                       <td className="table-actions">
-                        <button className="btn sm" onClick={() => onCalibrate(cam)}>기준점</button>
+                        <button className="btn sm" onClick={() => onCalibrate(cam)}>기준점 입력</button>
                         <button
                           className="btn sm measure-toggle"
                           disabled={measureBusyKey === cam.stream_key}
                           title="자동 거리측정 설정"
                           onClick={() => openAutoMeasurementSettings(cam)}
                         >
-                          측정
+                          거리 측정
                         </button>
                         <button
                           className="btn sm"
@@ -356,7 +447,6 @@ export default function CamerasPage({ onCalibrate }: Props) {
           <div className="panel-head row-between">
             <div>
               <h2>실시간 카메라</h2>
-              <p className="hint">캘리브레이션이 완료된 영상은 바로 확대 측정할 수 있습니다.</p>
             </div>
             <span className="badge none">{cams.length} CH</span>
           </div>
@@ -386,8 +476,14 @@ export default function CamerasPage({ onCalibrate }: Props) {
         }
         canEnable={measureCanEnable}
         saving={measureSaving}
+        weights={weights}
+        weightsBusy={weightsBusy}
+        weightsError={weightsError}
+        selectionResetToken={selectionResetToken}
         onClose={() => setMeasureTarget(null)}
         onConfirm={applyAutoMeasurement}
+        onUploadWeights={uploadWeights}
+        onResetWeights={resetWeights}
       />
     </>
   );

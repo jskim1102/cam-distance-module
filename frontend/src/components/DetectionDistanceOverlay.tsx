@@ -4,6 +4,7 @@ import type { Detection, SelectedYoloClass } from "../types/detection";
 import {
   buildDetectionPairs,
   filterDetectionsByClassConfidence,
+  modelClassKey,
 } from "../utils/detectionPairs";
 import { pixelToWorld } from "../utils/pixelToWorld";
 
@@ -61,7 +62,7 @@ export default function DetectionDistanceOverlay({
     if (!ctx) return;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    const selectedClassIds = selectedClasses.map((item) => item.id);
+    const selectedClassKeys = selectedClasses.map((item) => modelClassKey(item.model, item.id));
     const visible = filterDetectionsByClassConfidence(detections, selectedClasses);
     if (visible.length === 0) return;
 
@@ -95,7 +96,7 @@ export default function DetectionDistanceOverlay({
     };
 
     // 거리선을 먼저 그려 bbox와 클래스 라벨이 항상 위에 남도록 한다.
-    for (const [from, to] of buildDetectionPairs(visible, selectedClassIds, worldDistance)) {
+    for (const [from, to] of buildDetectionPairs(visible, selectedClasses, worldDistance)) {
       const p1 = pixelPoints.get(from);
       const p2 = pixelPoints.get(to);
       const w1 = worldPoints.get(from);
@@ -139,7 +140,10 @@ export default function DetectionDistanceOverlay({
         det.xyxy[2] * sx,
         det.xyxy[3] * sy,
       ];
-      const colorIndex = Math.max(0, selectedClassIds.indexOf(det.class_id));
+      const colorIndex = Math.max(
+        0,
+        selectedClassKeys.indexOf(modelClassKey(det.model, det.class_id)),
+      );
       const color = BOX_COLORS[colorIndex] ?? BOX_COLORS[0];
       ctx.strokeStyle = color;
       ctx.lineWidth = Math.max(1.5, 2 * scale);

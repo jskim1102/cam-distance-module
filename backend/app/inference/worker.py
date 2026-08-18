@@ -20,7 +20,7 @@ from typing import Optional
 import numpy as np
 
 from app import config
-from app.inference.models_dir import is_preset
+from app.inference.models_dir import get_active_model_name, is_allowed_model
 
 logger = logging.getLogger(__name__)
 
@@ -263,7 +263,7 @@ class InferenceWorker:
         conf_threshold: Optional[float] = None,
         device: Optional[str] = None,
     ) -> None:
-        self.model_name = model_name or config.YOLO_DEFAULT_MODEL
+        self.model_name = model_name or get_active_model_name()
         self.conf_threshold = float(
             conf_threshold if conf_threshold is not None else config.YOLO_CONF_THRESHOLD
         )
@@ -345,7 +345,7 @@ class InferenceWorker:
 
     def configure_models(self, model_names: set[str]) -> None:
         """active source가 실제로 요구하는 model lane만 유지해 VRAM을 회수한다."""
-        desired = {name for name in model_names if is_preset(name)}
+        desired = {name for name in model_names if is_allowed_model(name)}
         with self._pool_lock:
             self._desired_models = desired
             if self._running and self._enabled:
@@ -393,7 +393,9 @@ class InferenceWorker:
             if not self._enabled:
                 return False
             requested = req.model_names if req.model_names else [self.model_name]
-            model_names = list(dict.fromkeys(name for name in requested if is_preset(name)))
+            model_names = list(
+                dict.fromkeys(name for name in requested if is_allowed_model(name))
+            )
             if not model_names:
                 return False
             request_id = self._next_request_id
@@ -562,18 +564,42 @@ class InferenceWorker:
 
     # ── 런타임 제어 ──────────────────────────────────────────────
 
-    def set_model(self, model_name: str) -> None:
-        if not is_preset(model_name):
+    def set_model(self, model_name: str, *, force_reload: bool = False) -> None:
+        if not is_allowed_model(model_name):
             raise ValueError(f"허용되지 않은 모델: {model_name}")
         with self._pool_lock:
             old_model = self.model_name
             self.model_name = model_name
             desired = set(self._desired_models)
+            reload_lane = self._lanes.pop(model_name, None) if force_reload else None
+        if reload_lane is not None:
+            reload_lane.stop()
         if old_model in desired:
             desired.discard(old_model)
             desired.add(model_name)
             self.configure_models(desired)
-        logger.info("Global model switch: %s → %s", old_model, model_name)
+        elif force_reload and model_name in desired:
+            self.configure_models(desired)
+        logger.info(
+            "Global model switch: %s → %s%s",
+            old_model,
+            model_name,
+            " (reload)" if force_reload else "",
+        )
+
+    def reload_model(self, model_name: str) -> None:
+        """같은 alias의 custom 파일 내용이 교체됐을 때 해당 lane만 재생성한다."""
+        if not is_allowed_model(model_name):
+            raise ValueError(f"허용되지 않은 모델: {model_name}")
+        with self._pool_lock:
+            lane = self._lanes.pop(model_name, None)
+            desired = set(self._desired_models)
+            should_restart = self._running and self._enabled and model_name in desired
+        if lane is not None:
+            lane.stop()
+        if should_restart:
+            self.configure_models(desired)
+        logger.info("Model lane reload: %s", model_name)
 
     def set_enabled(self, enabled: bool) -> None:
         enabled = bool(enabled)

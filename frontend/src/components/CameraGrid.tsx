@@ -77,10 +77,10 @@ function GridCell({
       <button
         className="grid-measure-toggle"
         disabled={!calibrated}
-        title={calibrated ? "거리측정 모드 (확대)" : "calibration 먼저 설정하세요"}
+        title={calibrated ? "거리 측정 모드 (확대)" : "calibration 먼저 설정하세요"}
         onClick={onMeasure}
       >
-        📏 거리측정
+        테스트
       </button>
       <div className="cam-cell-bar">
         <span className="cam-cell-channel">CAM</span>

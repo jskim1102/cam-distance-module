@@ -13,6 +13,7 @@ from app.masking import _MASK, _restore_masked_password, _split_credentials, mas
 from app.mediamtx import ensure_stream, register_stream, remove_stream, update_stream
 from app.mediamtx import _validate_rtsp_url
 from app.models import IpCam
+from app.inference import models_dir
 from app.streaming.manager import detections_to_json
 from app.streaming.manager import manager as stream_manager
 from app.calibration import (
@@ -387,6 +388,27 @@ def set_ipcam_inference(
         raise HTTPException(status_code=404, detail="IP CAM을 찾을 수 없습니다")
 
     source_id = _source_id(stream_key)
+    expected_models = models_dir.get_active_model_names()
+    custom_available = len(expected_models) == 2
+    requested_models = (
+        body.models
+        if body.models is not None
+        else stream_manager.get_source_models(source_id)
+    )
+    if body.models is not None and body.models != expected_models:
+        raise HTTPException(
+            status_code=400,
+            detail="models는 현재 yolo26x.pt와 custom 가중치의 두 lane이어야 합니다",
+        )
+    if body.enabled is True:
+        if not custom_available:
+            raise HTTPException(status_code=400, detail="custom 가중치가 필요합니다")
+        if requested_models != expected_models:
+            raise HTTPException(
+                status_code=400,
+                detail="자동 측정에는 yolo26x.pt와 custom 가중치가 모두 필요합니다",
+            )
+
     if body.enabled is not None:
         stream_manager.set_source_inference_enabled(source_id, body.enabled)
     if body.conf_threshold is not None:

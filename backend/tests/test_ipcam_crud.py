@@ -4,6 +4,7 @@ CRUD list/create/update/delete/stats 는 추출 코드의 기존 동작을 고�
 16대 cap 은 net-new 로직 → 명시적 경계 테스트(16 OK, 17번째 409).
 """
 
+import json
 import os
 import tempfile
 from unittest.mock import patch
@@ -114,7 +115,26 @@ def test_delete_missing_returns_404(client):
     assert resp.status_code == 404
 
 
-def test_per_camera_inference_can_toggle_and_select_measurement_model(client):
+def test_per_camera_inference_requires_exact_preset_and_custom_pair(
+    client,
+    monkeypatch,
+    tmp_path,
+):
+    from app import config
+
+    monkeypatch.setattr(config, "WEIGHTS_DIR", tmp_path)
+    (tmp_path / "custom.pt").write_bytes(b"weights")
+    (tmp_path / "custom.json").write_text(
+        json.dumps(
+            {
+                "original_name": "warehouse.pt",
+                "uploaded_at": "2026-08-18T00:00:00Z",
+                "size_bytes": 7,
+                "classes": [{"id": 0, "name": "forklift"}],
+            }
+        ),
+        encoding="utf-8",
+    )
     cam = client.post(
         "/api/ipcams",
         json={"name": "measure", "rtsp_url": "rtsp://x/measure"},
@@ -123,11 +143,17 @@ def test_per_camera_inference_can_toggle_and_select_measurement_model(client):
 
     response = client.put(
         f"/api/ipcams/{key}/inference",
-        json={"enabled": True, "models": ["yolo26n.pt"]},
+        json={"enabled": True, "models": ["yolo26x.pt"]},
+    )
+    assert response.status_code == 400
+
+    response = client.put(
+        f"/api/ipcams/{key}/inference",
+        json={"enabled": True, "models": ["yolo26x.pt", "warehouse.pt"]},
     )
     assert response.status_code == 200
     assert response.json()["enabled"] is True
-    assert response.json()["models"] == ["yolo26n.pt"]
+    assert response.json()["models"] == ["yolo26x.pt", "warehouse.pt"]
 
     response = client.put(f"/api/ipcams/{key}/inference", json={"enabled": False})
     assert response.status_code == 200
@@ -137,9 +163,31 @@ def test_per_camera_inference_can_toggle_and_select_measurement_model(client):
 def test_per_camera_inference_rejects_unknown_stream_key(client):
     response = client.put(
         "/api/ipcams/not-registered/inference",
-        json={"enabled": True, "models": ["yolo26n.pt"]},
+        json={"enabled": True, "models": ["yolo26x.pt", "warehouse.pt"]},
     )
     assert response.status_code == 404
+
+
+def test_per_camera_inference_cannot_enable_without_custom_weights(
+    client,
+    monkeypatch,
+    tmp_path,
+):
+    from app import config
+
+    monkeypatch.setattr(config, "WEIGHTS_DIR", tmp_path)
+    cam = client.post(
+        "/api/ipcams",
+        json={"name": "measure", "rtsp_url": "rtsp://x/no-custom"},
+    ).json()
+
+    response = client.put(
+        f"/api/ipcams/{cam['stream_key']}/inference",
+        json={"enabled": True, "models": ["yolo26x.pt", "missing.pt"]},
+    )
+
+    assert response.status_code == 400
+    assert "custom" in response.json()["detail"]
 
 
 # ─── net-new: mediamtx 사이드이펙트 배선 (test-first) ───

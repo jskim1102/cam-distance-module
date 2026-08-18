@@ -37,6 +37,7 @@ from app.config import (
     MIN_INFERENCE_INTERVAL,
 )
 from app.inference import FrameRequest, InferenceResult, InferenceWorker
+from app.inference.models_dir import get_active_model_names
 from app.streaming.capture import SourceType, VideoCaptureThread
 
 logger = logging.getLogger("rtsp-streaming.streaming.manager")
@@ -283,10 +284,11 @@ class StreamManager:
         # source_id 별 confidence threshold — key 없으면 worker 의 global 값 사용
         self._per_source_conf: dict[str, float] = {}
         # source_id 별 사용 모델 목록.
-        #   key 없음 → global 기본 모델 1개 사용
+        #   key 없음 → 현재 고정 preset + 선택적 custom 기본 조합 사용
         #   [] (빈 리스트) → 이 카메라 추론 안 함 (bbox 없음)
         #   [m1, m2, ...] → 해당 모델 lane들을 병렬 사용하고 결과를 합침
         self._per_source_models: dict[str, list[str]] = {}
+        self._default_source_models: list[str] = get_active_model_names()
         self._per_source_lock = threading.Lock()
 
         # H1: 최근 삭제 source_id → 삭제 monotonic 시각. start_capture 의 create 분기가 참조해
@@ -530,13 +532,14 @@ class StreamManager:
                     sid for sid, cap in self._captures.items() if cap.is_running
                 }
             with self._per_source_lock:
+                default_models = list(self._default_source_models)
                 for sid in active_sources:
                     if not self._per_source_enabled.get(sid, True):
                         continue
                     models = self._per_source_models.get(sid)
                     if models == []:
                         continue
-                    desired.update(models or [str(status["model"])])
+                    desired.update(default_models if models is None else models)
         configure(desired)
 
     def _recompute_cadence(self) -> None:
@@ -628,10 +631,11 @@ class StreamManager:
         with self._per_source_lock:
             enabled = dict(self._per_source_enabled)
             models = {sid: list(names) for sid, names in self._per_source_models.items()}
+            default_models = list(self._default_source_models)
         active = [
             (sid, cap)
             for sid, cap in active
-            if enabled.get(sid, True) and models.get(sid, ["default"])
+            if enabled.get(sid, True) and models.get(sid, default_models)
         ]
         if not active:
             return False
@@ -692,7 +696,7 @@ class StreamManager:
             else:
                 # 다중 모델은 한 request 안에서 직렬 실행된다. source 표본 전에는 독립
                 # 실측한 선형 비용을 보수적으로 model count로 근사하고 이후 EWMA로 교체한다.
-                model_count = max(1, len(models.get(sid, [])))
+                model_count = max(1, len(models.get(sid, default_models)))
                 source_infer_ms = global_infer_ms * model_count
             cost_weights[sid] = source_infer_ms / global_infer_ms
 
@@ -800,10 +804,13 @@ class StreamManager:
         with self._per_source_lock:
             conf = self._per_source_conf.get(source_id)
             models_list = self._per_source_models.get(source_id)  # None or list
+            default_models = list(self._default_source_models)
 
         # 빈 리스트 = 명시적 "추론 안 함"
         if models_list is not None and len(models_list) == 0:
             return
+        if models_list is None:
+            models_list = default_models
 
         # 가드 통과(추론 ON)한 프레임만 현재 adaptive stage로 축소한다. WS frame.w/h는
         # 이 실제 request frame 치수를 worker가 그대로 돌려줘 좌표 SEAM을 유지한다.
@@ -974,10 +981,10 @@ class StreamManager:
                 self._latest_results.clear()
         self._recompute_cadence()
 
-    def set_inference_model(self, model_name: str) -> None:
-        if self._worker.get_status().get("model") == model_name:
+    def set_inference_model(self, model_name: str, *, force_reload: bool = False) -> None:
+        if self._worker.get_status().get("model") == model_name and not force_reload:
             return
-        self._worker.set_model(model_name)
+        self._worker.set_model(model_name, force_reload=force_reload)
         # global 모델 비용이 달라지므로 이전 capacity로 새 모델을 과구독하지 않는다.
         # 새 모델의 warm-up 제외 표본이 모일 때까지 bootstrap cadence로 돌아간다.
         with self._telemetry_lock:
@@ -1023,16 +1030,16 @@ class StreamManager:
             self._per_source_conf[source_id] = conf
         logger.info("Per-source conf: %s = %.2f", source_id, conf)
 
-    def get_source_models(self, source_id: str) -> Optional[list[str]]:
+    def get_source_models(self, source_id: str) -> list[str]:
         """source_id 의 per-source 모델 목록.
 
-        - None: 미설정 (global 기본 1개 사용)
+        - 미설정: 현재 기본 조합(yolo26x + 선택적 custom)을 반환
         - []  : 명시적 추론 안 함
-        - [m1, m2, ...]: 해당 모델들 (Phase 1 에선 [0] 만 적용)
+        - [m1, m2, ...]: 해당 모델들
         """
         with self._per_source_lock:
             models = self._per_source_models.get(source_id)
-            return list(models) if models is not None else None  # 복사 반환
+            return list(self._default_source_models if models is None else models)
 
     def set_source_models(self, source_id: str, models: list[str]) -> None:
         """source_id 의 per-source 모델 목록 설정. 빈 리스트면 추론 안 함."""
@@ -1052,6 +1059,35 @@ class StreamManager:
             self._imgsz_relief_ticks[source_id] = 0
         self._recompute_cadence()
         logger.info("Per-source models: %s = %s", source_id, models)
+
+    def set_all_source_models(self, model_names: list[str]) -> None:
+        """기본값과 명시 저장된 source 모델을 현재 활성 lane 조합으로 재계산한다."""
+        active_models = list(dict.fromkeys(model_names))
+        with self._per_source_lock:
+            self._default_source_models = active_models
+            source_ids = list(self._per_source_models)
+            for source_id in source_ids:
+                self._per_source_models[source_id] = list(active_models)
+        with self._telemetry_lock:
+            for source_id in source_ids:
+                metrics = self._source_telemetry.get(source_id)
+                if metrics is not None:
+                    metrics.infer_ms_ewma = 0.0
+                    metrics.infer_samples = 0
+                self._source_imgsz[source_id] = INFERENCE_IMGSZ
+                self._imgsz_pressure_ticks[source_id] = 0
+                self._imgsz_relief_ticks[source_id] = 0
+        self._recompute_cadence()
+        logger.info(
+            "All per-source models recalculated to %s (%d sources)",
+            active_models,
+            len(source_ids),
+        )
+
+    def reload_source_model(self, model_name: str) -> None:
+        """동일 이름으로 교체된 custom lane만 재시작한다."""
+        self._worker.reload_model(model_name)
+        self._recompute_cadence()
 
 
 def detections_to_json(result: InferenceResult) -> str:

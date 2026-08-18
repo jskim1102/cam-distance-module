@@ -32,6 +32,8 @@ services:
       YOLO_DEFAULT_MODEL: ${YOLO_DEFAULT_MODEL:-yolo26x.pt}
       YOLO_CONF_THRESHOLD: ${YOLO_CONF_THRESHOLD:-0.5}
       YOLO_DEVICE: ${YOLO_DEVICE:-}
+      # 전역 custom.pt + custom.json. /app/data named volume 아래라 재시작 후에도 유지된다.
+      WEIGHTS_DIR: ${WEIGHTS_DIR:-/app/data/weights}
     deploy:
       resources:
         reservations:

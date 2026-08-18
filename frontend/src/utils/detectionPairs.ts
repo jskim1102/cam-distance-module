@@ -7,16 +7,26 @@ export const DEFAULT_CLASS_CONFIDENCE = 0.5;
 export const MIN_CLASS_CONFIDENCE = 0.05;
 export const MAX_CLASS_CONFIDENCE = 0.95;
 export const PERSON_CLASS_ID = 0;
+export const PERSON_MODEL = "yolo26x.pt";
+export const PERSON_CLASS: SelectedYoloClass = {
+  id: PERSON_CLASS_ID,
+  name: "person",
+  model: PERSON_MODEL,
+  conf: DEFAULT_CLASS_CONFIDENCE,
+};
+
+export function modelClassKey(model: string, classId: number): string {
+  return `${model}\u0000${classId}`;
+}
 
 export function canApplyMeasurementSettings(
   enabled: boolean,
-  selectedClassCount: number,
+  selectedCustomClassCount: number,
   canEnable: boolean,
-  hasPersonAnchor: boolean,
+  customWeightsAvailable: boolean,
 ): boolean {
-  const validSelection = selectedClassCount === 1
-    || (selectedClassCount === 2 && hasPersonAnchor);
-  return !enabled || (canEnable && validSelection);
+  return !enabled
+    || (canEnable && customWeightsAvailable && selectedCustomClassCount === 1);
 }
 
 export function normalizeClassConfidence(value: unknown): number {
@@ -30,11 +40,14 @@ export function filterDetectionsByClassConfidence(
   detections: readonly Detection[],
   selectedClasses: readonly SelectedYoloClass[],
 ): Detection[] {
-  const confByClassId = new Map(
-    selectedClasses.map((item) => [item.id, normalizeClassConfidence(item.conf)]),
+  const confidenceByModelClass = new Map(
+    selectedClasses.map((item) => [
+      modelClassKey(item.model, item.id),
+      normalizeClassConfidence(item.conf),
+    ]),
   );
   return detections.filter((det) => {
-    const threshold = confByClassId.get(det.class_id);
+    const threshold = confidenceByModelClass.get(modelClassKey(det.model, det.class_id));
     return threshold != null && det.conf >= threshold;
   });
 }
@@ -49,14 +62,13 @@ export function minimumClassConfidence(selectedClasses: readonly SelectedYoloCla
 /**
  * 자동 거리측정용 bbox 쌍을 만든다.
  *
- * - 클래스 1개: 해당 클래스 detection의 모든 고유 쌍(i < j)
- * - 클래스 2개: person을 anchor로 삼아 각 person의 가장 가까운 상대 1개
- *   (상대 bbox 재사용 허용, person 없는 조합은 빈 배열)
- * - 그 외: UI 계약 밖의 입력이므로 빈 배열
+ * 고정 yolo26x person을 anchor로 삼아 각 person의 가장 가까운 custom 객체 1개를
+ * 연결한다. custom bbox 재사용은 허용한다. class_id는 모델마다 겹칠 수 있으므로
+ * 모든 비교는 model+class_id 복합키로 수행한다.
  */
 export function buildDetectionPairs(
   detections: readonly Detection[],
-  selectedClassIds: readonly number[],
+  selectedClasses: readonly SelectedYoloClass[],
   distanceBetween: DetectionPairDistance = (from, to) => {
     const fromX = (from.xyxy[0] + from.xyxy[2]) / 2;
     const fromY = from.xyxy[3];
@@ -65,38 +77,32 @@ export function buildDetectionPairs(
     return Math.hypot(toX - fromX, toY - fromY);
   },
 ): DetectionPair[] {
-  const uniqueIds = [...new Set(selectedClassIds)];
-  if (uniqueIds.length === 1) {
-    const sameClass = detections.filter((det) => det.class_id === uniqueIds[0]);
-    const pairs: DetectionPair[] = [];
-    for (let i = 0; i < sameClass.length; i += 1) {
-      for (let j = i + 1; j < sameClass.length; j += 1) {
-        pairs.push([sameClass[i], sameClass[j]]);
-      }
+  if (selectedClasses.length !== 2) return [];
+  const personSelection = selectedClasses.find(
+    (item) => item.model === PERSON_MODEL && item.id === PERSON_CLASS_ID,
+  );
+  const customSelection = selectedClasses.find((item) => item.model !== PERSON_MODEL);
+  if (!personSelection || !customSelection) return [];
+
+  const personKey = modelClassKey(personSelection.model, personSelection.id);
+  const customKey = modelClassKey(customSelection.model, customSelection.id);
+  const anchors = detections.filter(
+    (det) => modelClassKey(det.model, det.class_id) === personKey,
+  );
+  const candidates = detections.filter(
+    (det) => modelClassKey(det.model, det.class_id) === customKey,
+  );
+  if (anchors.length === 0 || candidates.length === 0) return [];
+
+  return anchors.flatMap((anchor): DetectionPair[] => {
+    let nearest: Detection | null = null;
+    let shortest = Number.POSITIVE_INFINITY;
+    for (const candidate of candidates) {
+      const distance = distanceBetween(anchor, candidate);
+      if (distance == null || !Number.isFinite(distance) || distance >= shortest) continue;
+      shortest = distance;
+      nearest = candidate;
     }
-    return pairs;
-  }
-
-  if (uniqueIds.length === 2) {
-    if (!uniqueIds.includes(PERSON_CLASS_ID)) return [];
-    const targetClassId = uniqueIds.find((id) => id !== PERSON_CLASS_ID);
-    if (targetClassId == null) return [];
-    const anchors = detections.filter((det) => det.class_id === PERSON_CLASS_ID);
-    const candidates = detections.filter((det) => det.class_id === targetClassId);
-    if (anchors.length === 0 || candidates.length === 0) return [];
-
-    return anchors.flatMap((anchor): DetectionPair[] => {
-      let nearest: Detection | null = null;
-      let shortest = Number.POSITIVE_INFINITY;
-      for (const candidate of candidates) {
-        const distance = distanceBetween(anchor, candidate);
-        if (distance == null || !Number.isFinite(distance) || distance >= shortest) continue;
-        shortest = distance;
-        nearest = candidate;
-      }
-      return nearest ? [[anchor, nearest]] : [];
-    });
-  }
-
-  return [];
+    return nearest ? [[anchor, nearest]] : [];
+  });
 }

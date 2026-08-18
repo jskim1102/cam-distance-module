@@ -34,6 +34,12 @@ MEDIAMTX_WEBRTC_HOST: str = os.getenv("MEDIAMTX_WEBRTC_HOST", "")
 
 # ── detection (YOLO 추론 — rtsp-detection 모듈과 동일 런타임 계약) ──
 YOLO_DEFAULT_MODEL: str = os.getenv("YOLO_DEFAULT_MODEL") or "yolo26x.pt"
+# 업로드된 전역 가중치 저장소. host dev 는 backend/data/weights, compose 는 env 로
+# /app/data/weights 를 주입해 같은 코드가 양쪽에서 동작한다.
+WEIGHTS_DIR: Path = Path(
+    os.getenv("WEIGHTS_DIR")
+    or str(Path(__file__).resolve().parent.parent / "data" / "weights")
+)
 
 
 def _env_float(name: str, default: float) -> tuple[float, str | None]:
